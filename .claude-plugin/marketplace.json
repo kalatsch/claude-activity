@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "claude-activity",
-  "description": "Local heatmap of Claude Code usage by hour × day",
+  "description": "Local heatmap of Claude Code and Codex CLI usage by hour × day",
   "owner": {
     "name": "kalatsch",
     "email": "kirill.kalatsch@gmail.com"
@@ -9,7 +9,8 @@
   "plugins": [
     {
       "name": "claude-activity",
-      "description": "Local heatmap of your Claude Code activity — hour × day grid, work/off/weekend breakdown, per-project session tooltips. Self-contained HTML dashboard from ~/.claude/projects JSONL logs.",
+      "version": "1.0.0",
+      "description": "Local heatmap of your Claude Code and Codex CLI activity — hour × day grid, work/off/weekend breakdown, per-project session tooltips. Self-contained HTML dashboard from ~/.claude/projects and ~/.codex/sessions JSONL logs.",
       "author": { "name": "kalatsch", "email": "kirill.kalatsch@gmail.com" },
       "category": "productivity",
       "source": "./",

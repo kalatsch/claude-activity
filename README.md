@@ -42,7 +42,7 @@ services.
 ```bash
 git clone https://github.com/kalatsch/claude-activity.git
 ln -s "$(pwd)/claude-activity" \
-      ~/.claude/plugins/cache/local/claude-activity/0.1.0
+      ~/.claude/plugins/cache/local/claude-activity/1.0.0
 ```
 
 ### Standalone (no Claude Code plugin)
