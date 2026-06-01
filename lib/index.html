@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Claude Code Activity</title>
+<title>AI Code Activity (Claude + Codex)</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@500;600;700&family=Nunito+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -18,7 +18,7 @@
     --text-faint: #586068;
     --accent: #58a6ff;
     --empty: #1a2030;
-    --cell-size: 26px;
+    --cell-size: 24px;
     /* Green ramp — weekdays */
     --c0: #1f2935;
     --c1: #1f6b3e;
@@ -326,6 +326,52 @@
     border-color: var(--text-faint);
   }
   .nav button:disabled { opacity: 0.3; cursor: not-allowed; }
+
+  /* Source toggle (Both / Claude / Codex) */
+  .source-toggle {
+    display: inline-flex;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 3px;
+    height: 32px;
+    gap: 2px;
+  }
+  .source-toggle button {
+    background: transparent;
+    color: var(--text-dim);
+    border: 0;
+    border-radius: 6px;
+    padding: 0 12px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    line-height: 1;
+    height: 100%;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: background 0.12s, color 0.12s;
+  }
+  .source-toggle button:hover:not([aria-pressed="true"]) {
+    color: var(--text);
+    background: var(--panel-2);
+  }
+  .source-toggle button[aria-pressed="true"] {
+    background: var(--panel-2);
+    color: var(--text);
+    box-shadow: inset 0 0 0 1px var(--border);
+  }
+  .source-toggle button .src-h {
+    color: var(--text-faint);
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+  }
+  .source-toggle button[aria-pressed="true"] .src-h {
+    color: var(--accent);
+  }
+  .header { flex-wrap: wrap; }
   .month-label {
     font-size: 18px;
     font-weight: 600;
@@ -484,11 +530,45 @@
   th.col-weekend { color: var(--r3); }
   th.row-offhour { color: var(--y3); }
 
+  /* Bottom daily-totals row: 25px-tall colspan'd spacer draws a 1px divider
+     line in the middle via a linear-gradient, yielding ≈16px of breathing
+     room to both the heatmap row above and the totals row below
+     (12px inside the cell + 4px border-spacing on each side). */
+  table.heatmap tr.totals-spacer td {
+    height: 25px;
+    padding: 0;
+    background: linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent 12px,
+      var(--border-soft) 12px,
+      var(--border-soft) 13px,
+      transparent 13px
+    );
+    border-radius: 0;
+  }
+  table.heatmap td.total-cell {
+    width: var(--cell-size);
+    height: var(--cell-size);
+    border-radius: 5px;
+    background: var(--c0);
+    transition: transform 0.06s, filter 0.06s;
+  }
+  table.heatmap td.total-cell:hover {
+    transform: scale(1.15);
+    filter: brightness(1.15);
+  }
+  table.heatmap th.totals-label {
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+  }
+
   .legend {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-top: 20px;
+    margin-top: auto;
+    padding-top: 20px;
     justify-content: flex-end;
     font-size: 12px;
     color: var(--text-dim);
@@ -532,7 +612,7 @@
     box-shadow: 0 6px 16px rgba(0,0,0,0.4);
   }
   #tooltip.show { opacity: 1; }
-  #tooltip { max-width: 360px; white-space: normal; }
+  #tooltip { width: 360px; white-space: normal; box-sizing: border-box; }
   #tooltip .t-head { font-weight: 600; margin-bottom: 2px; }
   #tooltip .t-dim { color: var(--text-dim); font-size: 11px; }
   #tooltip .t-list {
@@ -563,14 +643,100 @@
     word-wrap: break-word;
   }
   #tooltip .t-item em { color: var(--text-faint); font-style: normal; }
+
+  /* Day-summary tooltip blocks (model split + time-of-day split) */
+  #tooltip .t-sum-block {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border-soft);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  #tooltip .t-sum-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    align-items: center;
+    column-gap: 12px;
+    font-size: 12px;
+  }
+  #tooltip .t-sum-key { color: var(--text); display: inline-flex; align-items: center; gap: 6px; }
+  #tooltip .t-sum-val { color: var(--text); font-variant-numeric: tabular-nums; }
+  #tooltip .t-sum-pct { color: var(--text-dim); font-variant-numeric: tabular-nums; min-width: 36px; text-align: right; }
+  #tooltip .t-sum-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 12px;
+    height: 12px;
+  }
+  #tooltip .t-sum-icon svg { width: 100%; height: 100%; }
+  #tooltip .t-sum-dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+  }
+  #tooltip .t-dot-work { background: var(--c2); }
+  #tooltip .t-dot-off  { background: var(--y2); }
+  #tooltip .t-dot-wknd { background: var(--r2); }
+
+  /* Tooltip session item: first row carries project + duration on the left
+     and the source badge on the far right (baseline-aligned with the project
+     name). Second row is the wrappable title. */
+  #tooltip .t-item .t-head-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  #tooltip .t-item .t-head-row .t-src { margin-left: auto; align-self: baseline; }
+
+  .t-src {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 2px 6px 2px 4px;
+    border-radius: 4px;
+    line-height: 1;
+  }
+  .t-src svg { width: 11px; height: 11px; display: block; }
+  .t-src-claude { background: rgba(217, 119, 87, 0.18); color: #f59f7b; }
+  .t-src-codex  { background: rgba(13, 128, 242, 0.18); color: #5b9dff; }
+  /* Source pill in the segmented toggle — same colors, larger size */
+  #sourceToggle button[data-source="claude"][aria-pressed="true"] .src-h { color: #f59f7b; }
+  #sourceToggle button[data-source="codex"][aria-pressed="true"]  .src-h { color: #5b9dff; }
+
+  /* Toggle icons */
+  .src-ico {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+  }
+  .src-ico svg { width: 100%; height: 100%; display: block; }
+  .src-ico-claude { color: #f59f7b; }
+  .src-ico-codex  { color: #5b9dff; }
+  .src-icons {
+    display: inline-flex;
+    gap: 2px;
+    margin-right: 2px;
+  }
+  /* Dim the un-pressed buttons' icons a touch */
+  #sourceToggle button[aria-pressed="false"] .src-ico { opacity: 0.55; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>Claude Code Activity</h1>
+  <h1 id="pageTitle">AI Code Activity</h1>
   <div class="subtitle">
-    Sum of intervals between JSONL log events; gap threshold and work hours
-    are configurable. Local time.
+    Sum of intervals between JSONL log events from Claude Code
+    (<code>~/.claude/projects</code>) and Codex CLI (<code>~/.codex/sessions</code>).
+    Gap threshold and work hours are configurable. Local time.
   </div>
 
   <div class="header">
@@ -587,6 +753,20 @@
       </button>
       <button id="next" title="Next month" aria-label="Next month">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+      </button>
+    </div>
+    <div class="source-toggle" id="sourceToggle" role="tablist" aria-label="Data source">
+      <button type="button" data-source="both"   role="tab" aria-pressed="true">
+        <span class="src-icons"><span class="src-ico src-ico-claude" data-ico="claude"></span><span class="src-ico src-ico-codex" data-ico="codex"></span></span>
+        Both <span class="src-h" data-src-h="both">—</span>
+      </button>
+      <button type="button" data-source="claude" role="tab" aria-pressed="false">
+        <span class="src-ico src-ico-claude" data-ico="claude"></span>
+        Claude <span class="src-h" data-src-h="claude">—</span>
+      </button>
+      <button type="button" data-source="codex"  role="tab" aria-pressed="false">
+        <span class="src-ico src-ico-codex" data-ico="codex"></span>
+        Codex <span class="src-h" data-src-h="codex">—</span>
       </button>
     </div>
   </div>
@@ -615,6 +795,13 @@
           <div class="sw" style="background:var(--r2)"></div>
           <div class="sw" style="background:var(--r3)"></div>
           <div class="sw" style="background:var(--r4)"></div>
+        </div>
+        <span style="margin-left:14px">Daily Σ</span>
+        <div class="swatches">
+          <div class="sw" style="background:rgba(255,255,255,0.15)"></div>
+          <div class="sw" style="background:rgba(255,255,255,0.4)"></div>
+          <div class="sw" style="background:rgba(255,255,255,0.7)"></div>
+          <div class="sw" style="background:rgba(255,255,255,1)"></div>
         </div>
       </div>
     </div>
@@ -663,9 +850,53 @@ function classifyCell(year, monthIdx, day, hour) {
 }
 
 let DATA = null;
+let currentSource = "both";   // toggled by .source-toggle
 let currentMonth = null;
 const today = new Date();
 const todayKey = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,"0")}`;
+const STORAGE_SOURCE_KEY = "claude-activity.source";
+
+// Inline SVG marks. Drawn from primitive shapes — not exact brand logos,
+// just recognizable cues. Use currentColor so badge styles control hue.
+const SRC_ICONS = {
+  claude: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
+    '<path d="M12 2.2l1.7 7.1c.1.5.5.9 1 1L22 12l-7.3 1.7c-.5.1-.9.5-1 1L12 21.8l-1.7-7.1c-.1-.5-.5-.9-1-1L2 12l7.3-1.7c.5-.1.9-.5 1-1L12 2.2z"/>' +
+    '</svg>',
+  codex: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">' +
+    '<circle cx="12" cy="12" r="9"/>' +
+    '<path d="M16 8.5c-.9-1.1-2.4-1.7-4-1.7-2.8 0-5 2.2-5 5s2.2 5 5 5c1.6 0 3.1-.6 4-1.7"/>' +
+    '</svg>',
+};
+
+function srcBadgeHtml(src) {
+  if (src !== "claude" && src !== "codex") return "";
+  const label = src === "claude" ? "claude" : "codex";
+  return `<span class="t-src t-src-${src}">${SRC_ICONS[src]}${label}</span>`;
+}
+
+function applyBrandIcons(icons) {
+  // Generator can supply real brand SVGs (docs/claude.svg, docs/openai.svg).
+  // If absent, the inline fallbacks defined above stay in place.
+  if (!icons || typeof icons !== "object") return;
+  for (const k of Object.keys(icons)) {
+    if (icons[k]) SRC_ICONS[k] = icons[k];
+  }
+}
+
+function getView() {
+  // Always returns an object with months + the GLOBAL available_months
+  // (union across all sources), so the month picker stays consistent
+  // regardless of which source is selected. Months without data for the
+  // current source render an empty heatmap + "No data" sidebar.
+  if (!DATA || !DATA.sources || !DATA.sources[currentSource]) {
+    return { months: {}, available_months: DATA && DATA.available_months || [], total_seconds: 0 };
+  }
+  return {
+    months: DATA.sources[currentSource].months || {},
+    available_months: DATA.available_months || [],
+    total_seconds: DATA.sources[currentSource].total_seconds || 0,
+  };
+}
 
 function levelFor(seconds) {
   if (!seconds || seconds <= 0) return 0;
@@ -717,7 +948,7 @@ function monthLabelFor(m) {
 function renderMonthPicker() {
   const menu = document.getElementById("monthSelectMenu");
   menu.innerHTML = "";
-  for (const m of DATA.available_months) {
+  for (const m of getView().available_months) {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "month-select-item";
@@ -764,61 +995,103 @@ function updateMonthSelectSelection() {
   });
 }
 
+function neighborMonth(direction) {
+  // direction: -1 = previous, +1 = next. Works even if currentMonth isn't
+  // present in the source's available_months (returns nearest available).
+  const a = getView().available_months;
+  if (direction < 0) {
+    const earlier = a.filter(m => m < currentMonth);
+    return earlier.length ? earlier[earlier.length - 1] : null;
+  }
+  const later = a.filter(m => m > currentMonth);
+  return later.length ? later[0] : null;
+}
+
 function setMonth(m) {
   currentMonth = m;
   updateMonthSelectSelection();
 
-  const idx = DATA.available_months.indexOf(m);
-  document.getElementById("prev").disabled = idx <= 0;
-  document.getElementById("next").disabled = idx >= DATA.available_months.length - 1;
+  document.getElementById("prev").disabled = !neighborMonth(-1);
+  document.getElementById("next").disabled = !neighborMonth(+1);
 
+  updateToggleLabels();
   renderGrid();
   renderStats();
   syncCellSize();
 }
 
+function setSource(src) {
+  if (!DATA.sources || !DATA.sources[src]) return;
+  currentSource = src;
+  try { localStorage.setItem(STORAGE_SOURCE_KEY, src); } catch (e) {}
+
+  document.querySelectorAll("#sourceToggle button").forEach(b => {
+    b.setAttribute("aria-pressed", b.dataset.source === src ? "true" : "false");
+  });
+
+  // Keep currentMonth even when the new source has no data for it.
+  // setMonth() + renderStats() / renderGrid() degrade gracefully to an empty
+  // heatmap and "No data" sidebar — that's what we want here.
+  renderMonthPicker();
+  setMonth(currentMonth);
+}
+
+function updateToggleLabels() {
+  // Show per-source total for the currently-visible month, so the number
+  // matches what's displayed in the sidebar. Updates on every setMonth().
+  for (const src of ["both", "claude", "codex"]) {
+    const months = DATA.sources && DATA.sources[src] && DATA.sources[src].months;
+    const m = months && currentMonth ? months[currentMonth] : null;
+    const secs = m ? (m.total || 0) : 0;
+    const h = Math.round(secs / 3600);
+    const el = document.querySelector(`[data-src-h="${src}"]`);
+    if (el) el.textContent = h > 0 ? `${h}h` : "—";
+  }
+}
+
+function initSourceToggle() {
+  // Inject inline SVG for every .src-ico marker we placed in the DOM.
+  document.querySelectorAll(".src-ico[data-ico]").forEach(el => {
+    const which = el.dataset.ico;
+    if (SRC_ICONS[which]) el.innerHTML = SRC_ICONS[which];
+  });
+  document.querySelectorAll("#sourceToggle button").forEach(b => {
+    b.addEventListener("click", () => setSource(b.dataset.source));
+  });
+}
+
+// Cell size is fixed (--cell-size from CSS, 24px) so neither viewport changes
+// nor differing sidebar heights make the heatmap resize. We only need to lock
+// the maximum table width (for 31-day months) once.
+let CELL_SIZE_LOCKED = false;
+
 function syncCellSize() {
-  const stats = document.querySelector(".stats-card");
-  const gridCard = document.querySelector(".grid-card");
-  const legend = document.querySelector(".legend");
-  if (!stats || !gridCard) return;
-
-  const ROWS = 25;
+  if (CELL_SIZE_LOCKED) return;
+  const cell = parseFloat(getComputedStyle(document.documentElement)
+    .getPropertyValue("--cell-size")) || 24;
   const SPACING = 4;
-  const NEG_MARGIN = 8;
-
-  const statsH = stats.offsetHeight;
-  const gridCS = getComputedStyle(gridCard);
-  const padV = parseFloat(gridCS.paddingTop) + parseFloat(gridCS.paddingBottom);
-  const legendH = legend
-    ? legend.offsetHeight + parseFloat(getComputedStyle(legend).marginTop)
-    : 0;
-  const availH = statsH - padV - legendH;
-  const cell = Math.max(16, Math.floor((availH - (ROWS + 1) * SPACING + NEG_MARGIN) / ROWS));
-  document.documentElement.style.setProperty("--cell-size", `${cell}px`);
-
-  // Fix the left card width to fit a 31-day month, so shorter months right-align.
-  const LABEL_W = 40;            // row-label TH width (border-box, padding included)
+  const LABEL_W = 40;
   const DAY_COLS_MAX = 31;
   const maxTableW = LABEL_W + DAY_COLS_MAX * cell + (DAY_COLS_MAX + 2) * SPACING;
   document.documentElement.style.setProperty("--max-table-w", `${maxTableW}px`);
+  CELL_SIZE_LOCKED = true;
 }
 
-window.addEventListener("resize", () => {
-  if (window._syncT) clearTimeout(window._syncT);
-  window._syncT = setTimeout(syncCellSize, 80);
-});
+// Cell size is locked once on initial render. Resizing the window does not
+// recompute it — keeps the heatmap stable regardless of viewport changes.
 
 function renderStats() {
-  const m = DATA.months[currentMonth];
+  let m = getView().months[currentMonth];
   const title = document.getElementById("statsTitle");
   const body = document.getElementById("statsBody");
   const [y, mm] = currentMonth.split("-").map(Number);
   title.textContent = `${MONTH_NAMES[mm-1]} ${y}`;
 
+  // No data for this source/month: fall back to an empty month object so the
+  // full KPI/chart structure still renders (with zeros), keeping the
+  // sidebar visually the same height as for months that have data.
   if (!m) {
-    body.innerHTML = "<div class='row'><span class='label'>No data</span></div>";
-    return;
+    m = { days: {}, total: 0, tokens_total: 0 };
   }
 
   // Aggregate by category, by hour-of-day, by day-of-week
@@ -920,7 +1193,7 @@ function renderStats() {
 }
 
 function renderGrid() {
-  const m = DATA.months[currentMonth];
+  const m = getView().months[currentMonth];
   const [y, mm] = currentMonth.split("-").map(Number);
   const dn = daysInMonth(currentMonth);
 
@@ -928,8 +1201,8 @@ function renderGrid() {
   html += '<tr><th class="row-label"></th>';
   for (let d = 1; d <= dn; d++) {
     const wd = monIdxOf(new Date(y, mm - 1, d).getDay());
-    const cls = WORK_DAYS.has(wd) ? "" : "col-weekend";
-    html += `<th class="${cls}">${String(d).padStart(2,"0")}</th>`;
+    const cls = WORK_DAYS.has(wd) ? "day-head" : "day-head col-weekend";
+    html += `<th class="${cls}" data-d="${d}">${String(d).padStart(2,"0")}</th>`;
   }
   html += '</tr></thead><tbody>';
 
@@ -951,6 +1224,30 @@ function renderGrid() {
     }
     html += '</tr>';
   }
+
+  // Bottom row: daily totals. Spacer row above is a single colspan'd cell
+  // that draws a 1px divider; border-spacing puts equal 4px gaps on top and
+  // bottom of it.
+  const maxDayTotal = m
+    ? Math.max(1, ...Object.values(m.days || {}).map(d => d.total || 0))
+    : 1;
+  html += `<tr class="totals-spacer"><td colspan="${dn + 1}"></td></tr>`;
+
+  html += `<tr class="totals-row"><th class="row-label totals-label">Σ</th>`;
+  for (let d = 1; d <= dn; d++) {
+    const dkey = String(d).padStart(2, "0");
+    const day = m && m.days[dkey];
+    const total = day ? (day.total || 0) : 0;
+    const ratio = maxDayTotal > 0 ? Math.min(1, total / maxDayTotal) : 0;
+    // Empty days stay near the panel-2 tone; populated days ramp toward white.
+    const opacity = total > 0 ? (0.12 + ratio * 0.88).toFixed(3) : 0;
+    const bg = total > 0
+      ? `background: rgba(255,255,255,${opacity})`
+      : "";
+    html += `<td class="total-cell" data-d="${d}" data-s="${total}" style="${bg}"></td>`;
+  }
+  html += `</tr>`;
+
   html += '</tbody></table>';
 
   document.getElementById("grid").innerHTML = html;
@@ -960,7 +1257,121 @@ function renderGrid() {
 function attachTooltip() {
   const tt = document.getElementById("tooltip");
   const cells = document.querySelectorAll("td.cell");
-  const m = DATA.months[currentMonth];
+  const m = getView().months[currentMonth];
+
+  // Daily-totals row (bottom) — summary tooltip: model split + time-of-day split.
+  document.querySelectorAll("td.total-cell").forEach(td => {
+    td.addEventListener("mouseenter", () => {
+      const d = Number(td.dataset.d);
+      const dkey = String(d).padStart(2, "0");
+      const totalSec = Number(td.dataset.s) || 0;
+      const [yStr, mmStr] = currentMonth.split("-");
+      const y = Number(yStr), mm = Number(mmStr);
+      const date = new Date(y, mm - 1, d);
+      const wd = WEEKDAY_NAMES_SHORT[date.getDay()];
+
+      // Per-source totals (always claude + codex, independent of current filter)
+      const claudeDay = DATA.sources?.claude?.months?.[currentMonth]?.days?.[dkey];
+      const codexDay  = DATA.sources?.codex?.months?.[currentMonth]?.days?.[dkey];
+      const claudeSec = (claudeDay && claudeDay.total) || 0;
+      const codexSec  = (codexDay && codexDay.total) || 0;
+      const sourceSum = claudeSec + codexSec || 1;
+
+      // Time-of-day split (work / off / weekend) for the CURRENT source view
+      const day = m && m.days[dkey];
+      let work = 0, off = 0, wknd = 0;
+      if (day && day.hours) {
+        for (const [hkey, sec] of Object.entries(day.hours)) {
+          const h = Number(hkey);
+          const t = classifyCell(y, mm - 1, d, h);
+          if (t === "work") work += sec;
+          else if (t === "off") off += sec;
+          else wknd += sec;
+        }
+      }
+      const tSum = work + off + wknd || 1;
+
+      const pct = (v, base) => base > 0 ? Math.round((v / base) * 100) + "%" : "—";
+      const sumRow = (cls, label, sec, base) => `
+        <div class="t-sum-row">
+          <span class="t-sum-key">${label}</span>
+          <span class="t-sum-val">${formatDuration(sec)}</span>
+          <span class="t-sum-pct">${pct(sec, base)}</span>
+        </div>`;
+
+      // "At desk" time: between the first and last active hour, subtract the
+      // single biggest gap (assumed to be sleep). Uses Both data so the span
+      // doesn't shrink when filtering by Claude/Codex.
+      const bothDay = DATA.sources?.both?.months?.[currentMonth]?.days?.[dkey];
+      const activeHours = [];
+      if (bothDay && bothDay.hours) {
+        for (const [hkey, sec] of Object.entries(bothDay.hours)) {
+          if (sec > 0) activeHours.push(Number(hkey));
+        }
+        activeHours.sort((a, b) => a - b);
+      }
+      let spanStr = "";
+      if (activeHours.length > 0) {
+        const first = activeHours[0];
+        const last = activeHours[activeHours.length - 1];
+        let biggestInternalGap = 0;
+        for (let i = 1; i < activeHours.length; i++) {
+          const g = activeHours[i] - activeHours[i - 1] - 1;
+          if (g > biggestInternalGap) biggestInternalGap = g;
+        }
+        const span = last - first + 1;
+        const atDesk = span - biggestInternalGap;
+        const startStr = String(first).padStart(2, "0") + ":00";
+        const endStr = (last === 23 ? "24:00" : String(last + 1).padStart(2, "0") + ":00");
+        spanStr = ` · ${startStr}–${endStr} · ${atDesk}h at desk`;
+        if (biggestInternalGap > 0) {
+          spanStr += ` (${biggestInternalGap}h break)`;
+        }
+      }
+
+      let html =
+        `<div class="t-head">${formatDuration(totalSec)}</div>` +
+        `<div class="t-dim">${MONTH_NAMES[mm-1]} ${dkey} (${wd})${spanStr}</div>`;
+
+      // Per-source breakdown only makes sense in "Both" view — when a
+      // specific source is selected, the head value already represents it.
+      if (currentSource === "both" && (claudeSec > 0 || codexSec > 0)) {
+        html += '<div class="t-sum-block">';
+        html += sumRow("",
+          `<span class="t-sum-icon" data-ico="claude"></span>Claude`,
+          claudeSec, sourceSum);
+        html += sumRow("",
+          `<span class="t-sum-icon" data-ico="codex"></span>Codex`,
+          codexSec, sourceSum);
+        html += '</div>';
+      }
+
+      if (work > 0 || off > 0 || wknd > 0) {
+        html += '<div class="t-sum-block">';
+        if (work > 0) html += sumRow("", `<span class="t-sum-dot t-dot-work"></span>Work hours`, work, tSum);
+        if (off > 0)  html += sumRow("", `<span class="t-sum-dot t-dot-off"></span>Off-hours`, off, tSum);
+        if (wknd > 0) html += sumRow("", `<span class="t-sum-dot t-dot-wknd"></span>Weekend`, wknd, tSum);
+        html += '</div>';
+      }
+
+      tt.innerHTML = html;
+      // Inject SVG into source-icon spans
+      tt.querySelectorAll(".t-sum-icon[data-ico]").forEach(el => {
+        const which = el.dataset.ico;
+        if (SRC_ICONS[which]) el.innerHTML = SRC_ICONS[which];
+        if (which === "claude") el.style.color = "#f59f7b";
+        else if (which === "codex") el.style.color = "#5b9dff";
+      });
+
+      const r = td.getBoundingClientRect();
+      tt.style.left = (r.left + r.width / 2) + "px";
+      tt.style.top = (r.top - 6) + "px";
+      tt.style.transform = "translate(-50%, -100%)";
+      tt.classList.add("show");
+    });
+    td.addEventListener("mouseleave", () => tt.classList.remove("show"));
+  });
+
   cells.forEach(c => {
     c.addEventListener("mouseenter", e => {
       const d = c.dataset.d;
@@ -982,9 +1393,13 @@ function attachTooltip() {
         for (const sess of sessions) {
           const dur = formatDuration(sess.sec);
           const title = sess.title ? escapeHtml(sess.title) : "<em>no title</em>";
+          const badge = srcBadgeHtml(sess.source);
           html += `<div class="t-item">` +
-            `<span class="t-proj">${escapeHtml(sess.project)}</span>` +
-            `<span class="t-dur">${dur}</span>` +
+            `<div class="t-head-row">` +
+              `<span class="t-proj">${escapeHtml(sess.project)}</span>` +
+              `<span class="t-dur">${dur}</span>` +
+              `${badge}` +
+            `</div>` +
             `<div class="t-title">${title}</div>` +
           `</div>`;
         }
@@ -1009,12 +1424,12 @@ function escapeHtml(s) {
 }
 
 document.getElementById("prev").onclick = () => {
-  const i = DATA.available_months.indexOf(currentMonth);
-  if (i > 0) setMonth(DATA.available_months[i-1]);
+  const m = neighborMonth(-1);
+  if (m) setMonth(m);
 };
 document.getElementById("next").onclick = () => {
-  const i = DATA.available_months.indexOf(currentMonth);
-  if (i >= 0 && i < DATA.available_months.length - 1) setMonth(DATA.available_months[i+1]);
+  const m = neighborMonth(+1);
+  if (m) setMonth(m);
 };
 
 document.addEventListener("keydown", e => {
@@ -1038,15 +1453,38 @@ if (!window.CLAUDE_ACTIVITY_DATA) {
   if (Number.isInteger(DATA.first_day_of_week)) FIRST_DAY_OF_WEEK = DATA.first_day_of_week;
   const legW = document.querySelector(".leg-work-label");
   if (legW) legW.textContent = `Work (Mon-Fri ${formatIntervals(WORK_INTERVALS)})`;
-  if (!DATA.available_months.length) {
+  // Pick initial source: stored preference → payload default → "both".
+  let initialSource = DATA.default_source || "both";
+  try {
+    const stored = localStorage.getItem(STORAGE_SOURCE_KEY);
+    if (stored && DATA.sources && DATA.sources[stored]) initialSource = stored;
+  } catch (e) {}
+
+  applyBrandIcons(DATA.icons);
+  initSourceToggle();
+
+  // First render forces "both" so the initial syncCellSize() locks the cell
+  // size against the *fullest* sidebar — switching to claude/codex later
+  // won't shrink the heatmap.
+  currentSource = "both";
+  document.querySelectorAll("#sourceToggle button").forEach(b => {
+    b.setAttribute("aria-pressed", b.dataset.source === currentSource ? "true" : "false");
+  });
+
+  if (!getView().available_months.length) {
     document.querySelector(".wrap").innerHTML =
       "<h1>No data</h1><p>Run <code>python3 generate.py</code> and refresh the page.</p>";
   } else {
-    currentMonth = DATA.available_months.includes(todayKey)
+    currentMonth = getView().available_months.includes(todayKey)
       ? todayKey
-      : DATA.available_months[DATA.available_months.length - 1];
+      : getView().available_months[getView().available_months.length - 1];
     renderMonthPicker();
     setMonth(currentMonth);
+
+    // Now flip to the user's actual preferred source (cell size already locked).
+    if (initialSource !== "both" && DATA.sources[initialSource]) {
+      setSource(initialSource);
+    }
 
     const gen = new Date(DATA.generated_at);
     const genFmt = gen.toLocaleString("en-US", {

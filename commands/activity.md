@@ -43,10 +43,11 @@ Config file:  ~/.claude-activity/config.json
                 first_day_of_week, cache_read_weight, output_dir
 Output:       ~/.claude-activity/index.html (the dashboard)
 History:      ~/.claude-activity/history.json (preserves data after Claude
-                Code prunes old session JSONL files)
+                Code prunes old session JSONL files; a one-step
+                history.json.bak rollback is written before each update)
 
-The plugin also runs generate.py automatically on Claude Code SessionStart
-and SessionEnd, so `history.json` stays fresh without manual /activity calls.
+History is refreshed only when you run /activity (there are no background
+SessionStart/SessionEnd hooks), so nothing rewrites it behind your back.
 ```
 
 ## Step 1 — Locate `lib/generate.py`

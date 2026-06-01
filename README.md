@@ -1,15 +1,18 @@
 # claude-activity
 
-A local, privacy-respecting **heatmap of your Claude Code usage** — see when
-you actually worked, by hour of day × day of month, with project / session
-breakdown on hover. Everything is computed on your machine from
-`~/.claude/projects/**/*.jsonl`; no server, no telemetry, no external
+A local, privacy-respecting **heatmap of your AI coding usage** — Claude Code
+*and* Codex CLI — see when you actually worked, by hour of day × day of
+month, with project / session breakdown on hover. Everything is computed on
+your machine from `~/.claude/projects/**/*.jsonl` and
+`~/.codex/sessions/**/*.jsonl`; no server, no telemetry, no external
 services.
 
 ![screenshot](docs/screenshot.png)
 
 ## Features
 
+- **Source toggle** at the top: **Both** (Union of activity intervals) ·
+  **Claude** · **Codex**. Choice persists in localStorage.
 - 24 × N-day heatmap for any month with activity
 - Three cell types: **work hours** (configurable), **off-hours** (weekday
   outside the work window), **weekends** — color-coded green / yellow / red
@@ -17,11 +20,12 @@ services.
 - Per-hour-of-day and per-day-of-week bar charts
 - Hover tooltip shows projects + session titles + per-project time for that
   exact hour
-- Daily token totals (input + output + cache, weighted) per month
-- **Persistent history.json** — survives Claude Code pruning old session files
+- Daily token totals (input + output + cache, weighted) per month — split by
+  source via the toggle
+- **Persistent history.json** — survives Claude/Codex pruning old session files,
+  with a one-step `history.json.bak` rollback written before every update
 - Configurable: work days, work hours, gap threshold, first day of week,
   auto-open
-- Auto-syncs in the background via `SessionStart` / `SessionEnd` hooks
 - 100% local, single HTML file, opens from `file://`
 
 ## Install
@@ -94,18 +98,15 @@ threshold, auto-open, first day of week) and saves the answers to
    Code later prunes from disk are preserved in the dashboard. Merge takes
    `max` per bucket — safe across pruning and re-runs.
 
-## Auto-sync hooks
+## When history updates
 
-The plugin registers two Claude Code hooks that silently keep `history.json`
-fresh — you never need to remember to `/activity` just to "save" data.
-
-| Hook | Async | Fires when |
-|---|---|---|
-| `SessionStart` | yes | New Claude Code session starts. Catches data the previous `SessionEnd` may have missed on an abrupt close (Cmd+Q, terminal kill, crash). |
-| `SessionEnd` | no | Session closes gracefully (`/exit`, normal exit). Adds ~3 s. |
-
-Both invoke `python3 ${CLAUDE_PLUGIN_ROOT}/lib/generate.py --no-open`. To
-disable, delete `hooks/hooks.json`.
+History is refreshed **only when you run `/activity`** (or `generate.py`
+directly). There are intentionally **no background `SessionStart` /
+`SessionEnd` hooks**: an auto-run that ships out of sync with the on-disk
+`history.json` schema can silently overwrite the file with whatever is still
+in the logs and drop already-pruned months. Keeping the update explicit means
+nothing rewrites your history behind your back — re-run `/activity` whenever
+you want to fold in fresh sessions.
 
 ## Why a separate `history.json`
 
@@ -113,6 +114,9 @@ Claude Code periodically deletes older session JSONL files. Without history,
 your heatmap would forget pruned months. `history.json` keeps only aggregated
 per-hour numbers (~65 KB for a year of dense usage) — far cheaper than
 backing up the raw 500 MB+ of JSONL.
+
+Every run first copies the current `history.json` to `history.json.bak` before
+writing, so a bad or partial generation can always be rolled back one step.
 
 ## Comparison with `session-report` (Anthropic, official)
 
