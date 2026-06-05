@@ -101,6 +101,19 @@
   }
   .card.recommended .substep i { background: rgba(245,159,123,0.14); border-color: rgba(245,159,123,0.4); color: var(--claude); }
 
+  .note {
+    display: flex; gap: 10px; align-items: flex-start;
+    color: var(--text-dim); font-size: 13.5px; line-height: 1.55;
+    background: var(--panel); border: 1px solid var(--border-soft);
+    border-radius: 12px; padding: 14px 16px; margin: 0 0 18px;
+  }
+  .note b { color: var(--text); font-weight: 600; }
+  .note code {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px;
+    color: var(--text); background: var(--panel-2); padding: 1px 6px; border-radius: 5px;
+  }
+  .note .ico { flex: none; color: var(--claude); font-size: 15px; line-height: 1.4; }
+
   /* ---- code block ---- */
   .code {
     position: relative;
@@ -222,16 +235,9 @@
     <div class="code"><button class="copy">Copy</button><span class="p">/plugin</span> install claude-activity@claude-activity</div>
   </div>
 
-  <div class="card">
-    <div class="card-head">
-      <h2>Update later</h2>
-    </div>
-    <p class="desc nopad">Same idea — again, one at a time, in order.</p>
-    <div class="substep"><i>1</i>Refresh the source</div>
-    <div class="code"><button class="copy">Copy</button><span class="p">/plugin</span> marketplace update claude-activity</div>
-    <div class="substep"><i>2</i>Update the plugin</div>
-    <div class="code"><button class="copy">Copy</button><span class="p">/plugin</span> update claude-activity@claude-activity</div>
-  </div>
+  <p class="note"><span class="ico">↻</span><span><b>Updating later?</b> No commands needed — open the built-in
+    <code>/plugin</code> menu, go to <b>Manage&nbsp;plugins → claude-activity → Update</b>. (Restart the window,
+    or run <code>/reload-plugins</code>, to load the new version into the current session.)</span></p>
 
   <div class="section-label">After install</div>
   <div class="mini-grid">

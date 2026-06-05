@@ -48,12 +48,9 @@ them one at a time, in order (the install needs the source added first):
 /plugin install claude-activity@claude-activity
 ```
 
-To update later:
-
-```bash
-/plugin marketplace update claude-activity
-/plugin update claude-activity@claude-activity
-```
+To update later, use the built-in `/plugin` menu → **Manage plugins →
+claude-activity → Update** (then restart the window or run `/reload-plugins`
+to load it into the current session).
 
 > Sharing with teammates? Send them the install page —
 > **<https://kalatsch.github.io/claude-activity/>** (served from
