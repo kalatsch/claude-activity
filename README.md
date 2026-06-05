@@ -55,8 +55,9 @@ To update later:
 /plugin update claude-activity@claude-activity
 ```
 
-> Sharing with teammates? Hand them [`docs/install.html`](docs/install.html) —
-> a self-contained page with the same copy-paste commands.
+> Sharing with teammates? Send them the install page —
+> **<https://kalatsch.github.io/claude-activity/>** (served from
+> [`docs/index.html`](docs/index.html) via GitHub Pages).
 
 ## Usage
 
