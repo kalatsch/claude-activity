@@ -106,6 +106,11 @@ threshold, auto-open, first day of week) and saves the answers to
 6. Output is merged with `~/.claude-activity/history.json` so months Claude
    Code later prunes from disk are preserved in the dashboard. Merge takes
    `max` per bucket — safe across pruning and re-runs.
+7. On each run the installed plugin **prunes its own stale cache versions** —
+   sibling directories under `~/.claude/plugins/cache/.../claude-activity/` that
+   belong to older releases (which may carry the legacy history writer or old
+   hooks) are removed, so outdated code can't run and clobber data. This never
+   touches `output_dir`, so saved history and token prices are unaffected.
 
 ## When history updates
 

@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "claude-activity",
-      "version": "1.1.0",
+      "version": "1.1.1",
       "description": "Local heatmap of your Claude Code and Codex CLI activity — hour × day grid, work/off/weekend breakdown, per-project session tooltips, daily token totals, and estimated API cost (per model, with historical pricing). Today's column is highlighted. Self-contained HTML dashboard from ~/.claude/projects and ~/.codex/sessions JSONL logs.",
       "author": { "name": "kalatsch", "email": "kirill.kalatsch@gmail.com" },
       "category": "productivity",

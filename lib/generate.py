@@ -17,6 +17,7 @@ from disk are preserved in the dashboard.
 import json
 import os
 import re
+import shutil
 import sys
 import webbrowser
 from collections import defaultdict
@@ -741,7 +742,43 @@ def _fmt_hours(secs):
     return f"{int(secs // 3600)} h {int((secs % 3600) // 60)} min"
 
 
+def prune_stale_cache_versions():
+    """When running as the *installed* plugin, delete sibling cache directories
+    of other (stale) plugin versions, so an outdated cached generate.py — which
+    may write the legacy history format or still carry SessionStart/SessionEnd
+    hooks — can never run again and clobber data.
+
+    Safety:
+    - No-op unless this file lives under .../.claude/plugins/cache/.../<ver>/
+      (i.e. running from a source checkout does nothing).
+    - Never removes its own version directory.
+    - Never touches the output dir: history.json and the price book live in
+      output_dir (default ~/.claude-activity), a completely separate tree, so
+      cleaning the cache cannot affect saved history or token prices.
+    """
+    here = Path(__file__).resolve()
+    parts = here.parts
+    if "plugins" not in parts or "cache" not in parts:
+        return  # source checkout — nothing to prune
+    try:
+        version_dir = here.parents[1]              # .../<ver>
+        versions_root = here.parents[2]            # .../claude-activity/claude-activity
+        if versions_root.name != "claude-activity":
+            return
+        removed = []
+        for child in versions_root.iterdir():
+            if child.is_dir() and child.resolve() != version_dir:
+                shutil.rmtree(child, ignore_errors=True)
+                if not child.exists():
+                    removed.append(child.name)
+        if removed:
+            print(f"  pruned stale plugin versions: {', '.join(sorted(removed))}")
+    except OSError:
+        pass
+
+
 def main():
+    prune_stale_cache_versions()
     cfg = load_config()
     gap_limit = timedelta(minutes=int(cfg["gap_minutes"]))
     work_intervals = [
