@@ -129,8 +129,12 @@ your heatmap would forget pruned months. `history.json` keeps only aggregated
 per-hour numbers (~65 KB for a year of dense usage) — far cheaper than
 backing up the raw 500 MB+ of JSONL.
 
-Every run first copies the current `history.json` to `history.json.bak` before
-writing, so a bad or partial generation can always be rolled back one step.
+**Self-healing.** Every run writes the freshly-merged result to a one-step
+`history.json.bak` and a per-day `history-YYYY-MM-DD.bak.json` snapshot, and on
+load it merges (union/max) across `history.json` **and every backup**. So even
+if some outdated code overwrites `history.json` with fewer months, the next
+proper run rebuilds the full history — and the token price book — from the
+backups. Backups live in `output_dir`, never in the plugin cache.
 
 ## Comparison with `session-report` (Anthropic, official)
 

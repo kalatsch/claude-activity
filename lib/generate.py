@@ -704,20 +704,38 @@ def _strip_alien_session_sources(months, expected_source):
     return months
 
 
-def _load_history_sources(history_file):
-    """Return {source: months_dict}. Migrates legacy single-source format
-    and strips alien-source session items from claude/codex buckets."""
-    out = {s: {} for s in SOURCES}
-    if not history_file.exists():
-        return out
+def _iter_history_files(history_file):
+    """The live history.json plus every `history*.json*` backup in the output
+    dir, de-duplicated. Reading from all of them is what makes history
+    self-healing: if an outdated generate.py clobbers history.json, the next
+    proper run rebuilds the full picture from the backups."""
+    output_dir = history_file.parent
+    seen, files = set(), []
+    candidates = [history_file]
     try:
-        raw = json.loads(history_file.read_text())
-    except (json.JSONDecodeError, OSError):
-        return out
+        candidates += sorted(output_dir.glob("history*.json*"))
+    except OSError:
+        pass
+    for p in candidates:
+        try:
+            if not p.exists():
+                continue
+            rp = p.resolve()
+        except OSError:
+            continue
+        if rp not in seen:
+            seen.add(rp)
+            files.append(p)
+    return files
+
+
+def _parse_history_sources(raw):
+    """One file's raw JSON → {source: months_dict}, handling the legacy
+    single-source schema and stripping alien-source session items."""
+    out = {s: {} for s in SOURCES}
     if isinstance(raw.get("sources"), dict):
         for s in SOURCES:
-            entry = raw["sources"].get(s) or {}
-            months = entry.get("months") or {}
+            months = (raw["sources"].get(s) or {}).get("months") or {}
             if s in ("claude", "codex"):
                 months = _strip_alien_session_sources(months, s)
             out[s] = months
@@ -726,16 +744,35 @@ def _load_history_sources(history_file):
     return out
 
 
+def _load_history_sources(history_file):
+    """Return {source: months_dict}, merged (union/max) across history.json AND
+    every backup snapshot — self-healing against a clobber by stale code."""
+    out = {s: {} for s in SOURCES}
+    for p in _iter_history_files(history_file):
+        try:
+            raw = json.loads(p.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        parsed = _parse_history_sources(raw)
+        for s in SOURCES:
+            out[s] = merge_months(parsed[s], out[s])
+    return out
+
+
 def _load_history_prices(history_file):
-    """Return the stored list of dated price snapshots (empty if none)."""
-    if not history_file.exists():
-        return []
-    try:
-        raw = json.loads(history_file.read_text())
-    except (json.JSONDecodeError, OSError):
-        return []
-    p = raw.get("prices")
-    return p if isinstance(p, list) else []
+    """Union of dated price snapshots across history.json and all backups, so a
+    clobber that drops the `prices` section is healed from the backups."""
+    by_eff = {}
+    for p in _iter_history_files(history_file):
+        try:
+            raw = json.loads(p.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        for snap in (raw.get("prices") or []):
+            eff = snap.get("effective")
+            if eff and eff not in by_eff:
+                by_eff[eff] = snap
+    return [by_eff[e] for e in sorted(by_eff)]
 
 
 def _fmt_hours(secs):
@@ -836,19 +873,22 @@ def main():
 
     # Persist history with new schema (drop legacy top-level "months" key).
     history_file.parent.mkdir(parents=True, exist_ok=True)
-    # Rotate a one-step backup first, so a bad or partial write can always be
-    # rolled back from history.json.bak (guards against accidental data loss).
-    if history_file.exists():
-        try:
-            (output_dir / "history.json.bak").write_bytes(history_file.read_bytes())
-        except OSError:
-            pass
-    history_file.write_text(json.dumps(
+    history_text = json.dumps(
         {"updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
          "sources": sources_history,
          "prices": price_book},
         ensure_ascii=False, indent=2,
-    ))
+    )
+    history_file.write_text(history_text)
+    # Back up the freshly-merged (rich) content — never the possibly-clobbered
+    # on-disk file. A per-day snapshot is kept (so history can always be rebuilt
+    # by _load_history_sources) plus a one-step history.json.bak rollback.
+    try:
+        today = datetime.now().astimezone().date().isoformat()
+        (output_dir / f"history-{today}.bak.json").write_text(history_text)
+        (output_dir / "history.json.bak").write_text(history_text)
+    except OSError:
+        pass
 
     # available_months union across sources — used by the toggle to know the
     # full set of months to render in the month-picker.
