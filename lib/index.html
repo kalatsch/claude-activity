@@ -530,6 +530,18 @@
   th.col-weekend { color: var(--r3); }
   th.row-offhour { color: var(--y3); }
 
+  /* Today's column: a faint white wash layered over every cell (works on any
+     activity level — base, l1–l4, work/off/wknd) so the column reads slightly
+     lighter, plus an emphasised day header. Only applied for the current month. */
+  table.heatmap td.cell.today-col,
+  table.heatmap td.total-cell.today-col {
+    box-shadow: inset 0 0 0 999px rgba(255, 255, 255, 0.12);
+  }
+  table.heatmap th.day-head.today-col {
+    color: var(--text);
+    font-weight: 600;
+  }
+
   /* Bottom daily-totals row: 25px-tall colspan'd spacer draws a 1px divider
      line in the middle via a linear-gradient, yielding ≈16px of breathing
      room to both the heatmap row above and the totals row below
@@ -935,6 +947,14 @@ function formatTokens(n) {
   return String(n);
 }
 
+// Estimated API cost (USD). Whole dollars once we're past $1, cents below.
+function formatMoney(n) {
+  if (!n || n <= 0) return "$0";
+  if (n < 1) return "$" + n.toFixed(2);
+  if (n < 10) return "$" + n.toFixed(1);
+  return "$" + Math.round(n).toLocaleString("en-US");
+}
+
 function daysInMonth(yyyymm) {
   const [y, m] = yyyymm.split("-").map(Number);
   return new Date(y, m, 0).getDate();
@@ -1091,7 +1111,7 @@ function renderStats() {
   // full KPI/chart structure still renders (with zeros), keeping the
   // sidebar visually the same height as for months that have data.
   if (!m) {
-    m = { days: {}, total: 0, tokens_total: 0 };
+    m = { days: {}, total: 0, tokens_total: 0, cost_total: 0 };
   }
 
   // Aggregate by category, by hour-of-day, by day-of-week
@@ -1155,6 +1175,7 @@ function renderStats() {
   }).join("");
 
   const totalTokens = m.tokens_total || 0;
+  const totalCost = m.cost_total || 0;
 
   const kpi = (label, value, pctStr) => `
     <div class="kpi">
@@ -1189,6 +1210,8 @@ function renderStats() {
        <h4>Tokens</h4>
        ${row("", "Used (billable)", formatTokens(totalTokens))}
        <div class="row sub"><span class="label">input + output + cache_create + cache_read × 0.1</span><span class="value"></span></div>
+       ${row("total", "≈ API cost", formatMoney(totalCost))}
+       <div class="row sub"><span class="label">if billed at ${currentSource === "codex" ? "OpenAI" : currentSource === "claude" ? "Anthropic" : "Anthropic + OpenAI"} API rates, per model</span><span class="value"></span></div>
      </div>`;
 }
 
@@ -1197,11 +1220,16 @@ function renderGrid() {
   const [y, mm] = currentMonth.split("-").map(Number);
   const dn = daysInMonth(currentMonth);
 
+  // Highlight today's column, but only while viewing the current month.
+  const isCurrentMonth = currentMonth === todayKey;
+  const todayD = today.getDate();
+  const todayCls = d => (isCurrentMonth && d === todayD ? " today-col" : "");
+
   let html = '<table class="heatmap"><thead>';
   html += '<tr><th class="row-label"></th>';
   for (let d = 1; d <= dn; d++) {
     const wd = monIdxOf(new Date(y, mm - 1, d).getDay());
-    const cls = WORK_DAYS.has(wd) ? "day-head" : "day-head col-weekend";
+    const cls = (WORK_DAYS.has(wd) ? "day-head" : "day-head col-weekend") + todayCls(d);
     html += `<th class="${cls}" data-d="${d}">${String(d).padStart(2,"0")}</th>`;
   }
   html += '</tr></thead><tbody>';
@@ -1220,6 +1248,7 @@ function renderGrid() {
       if (lvl > 0) cls.push(`l${lvl}`);
       if (kind === "wknd") cls.push("wknd");
       else if (kind === "off") cls.push("off");
+      if (isCurrentMonth && d === todayD) cls.push("today-col");
       html += `<td class="${cls.join(" ")}" data-d="${d}" data-h="${h}" data-s="${sec}"></td>`;
     }
     html += '</tr>';
@@ -1244,7 +1273,7 @@ function renderGrid() {
     const bg = total > 0
       ? `background: rgba(255,255,255,${opacity})`
       : "";
-    html += `<td class="total-cell" data-d="${d}" data-s="${total}" style="${bg}"></td>`;
+    html += `<td class="total-cell${todayCls(d)}" data-d="${d}" data-s="${total}" style="${bg}"></td>`;
   }
   html += `</tr>`;
 
@@ -1329,9 +1358,14 @@ function attachTooltip() {
         }
       }
 
+      const dayCost = (day && day.cost) || 0;
+      const dayTokens = (day && day.tokens && day.tokens.all) || 0;
       let html =
         `<div class="t-head">${formatDuration(totalSec)}</div>` +
-        `<div class="t-dim">${MONTH_NAMES[mm-1]} ${dkey} (${wd})${spanStr}</div>`;
+        `<div class="t-dim">${MONTH_NAMES[mm-1]} ${dkey} (${wd})${spanStr}</div>` +
+        ((dayCost > 0 || dayTokens > 0)
+          ? `<div class="t-dim">${dayCost > 0 ? `≈ ${formatMoney(dayCost)} API cost · ` : ""}${formatTokens(dayTokens)} tokens</div>`
+          : "");
 
       // Per-source breakdown only makes sense in "Both" view — when a
       // specific source is selected, the head value already represents it.

@@ -64,6 +64,134 @@ LOGO_FILES = {
 SOURCES = ("both", "claude", "codex")
 
 
+# ---------- Token pricing (USD per million tokens) ----------
+# Each run records the current snapshot into history.json tagged with an
+# effective date; old snapshots are never deleted, so every day is costed at
+# the rates in effect on that day (historicity). When a published price
+# changes, edit PRICES below — the next run appends a new dated snapshot.
+PRICE_EFFECTIVE = "2026-01-01"   # effective date for the baseline snapshot
+PRICES = {
+    "anthropic": {
+        #              input  output  cache_write(5m)  cache_read
+        "opus-4-8":   {"input": 5.0, "output": 25.0, "cache_write": 6.25, "cache_read": 0.50},
+        "opus-4-7":   {"input": 5.0, "output": 25.0, "cache_write": 6.25, "cache_read": 0.50},
+        "opus-4-6":   {"input": 5.0, "output": 25.0, "cache_write": 6.25, "cache_read": 0.50},
+        "sonnet-4-6": {"input": 3.0, "output": 15.0, "cache_write": 3.75, "cache_read": 0.30},
+        "sonnet-4-5": {"input": 3.0, "output": 15.0, "cache_write": 3.75, "cache_read": 0.30},
+        "haiku-4-5":  {"input": 1.0, "output": 5.0,  "cache_write": 1.25, "cache_read": 0.10},
+    },
+    "openai": {
+        # Codex. No cache-creation counter; cached input maps to cache_read.
+        "gpt-5.5":     {"input": 5.0,  "output": 30.0,  "cache_write": 0.0, "cache_read": 0.50},
+        "gpt-5.5-pro": {"input": 30.0, "output": 180.0, "cache_write": 0.0, "cache_read": 0.0},
+    },
+}
+
+
+def normalize_model(name):
+    """Map a raw model id to a price-table key.
+    claude-opus-4-7 → opus-4-7 ; claude-haiku-4-5-20251001 → haiku-4-5 ;
+    claude-opus-4-8[1m] → opus-4-8 (1M context is standard-priced) ;
+    bare 'opus' → opus-4-7 ; '<synthetic>'/empty → None (no cost)."""
+    if not name:
+        return None
+    n = name.strip().split("[")[0]            # drop context-window suffix like [1m]
+    if not n or n == "<synthetic>":
+        return None
+    if n.startswith("claude-"):
+        parts = n[len("claude-"):].split("-")
+        return "-".join(parts[:3]) if len(parts) >= 3 else "-".join(parts)
+    if n == "opus":
+        return "opus-4-7"
+    return n                                  # gpt-5.5 etc. pass through
+
+
+def _provider_for_model(model):
+    if not model:
+        return None
+    return "openai" if model.startswith(("gpt", "o1", "o3", "o4")) else "anthropic"
+
+
+def _rate_for(snapshot, model):
+    """Find a rate dict for `model` in a price snapshot, with a same-family
+    fallback (an unseen opus-x.y falls back to the newest opus entry)."""
+    prov = _provider_for_model(model)
+    table = (snapshot or {}).get(prov, {}) if prov else {}
+    if model in table:
+        return table[model]
+    fam = model.split("-")[0] if model else ""
+    fam_keys = sorted(k for k in table if k.split("-")[0] == fam)
+    return table[fam_keys[-1]] if fam_keys else None
+
+
+def _snapshot_for_date(prices, date_str):
+    """Pick the price snapshot effective on `date_str` (latest effective <= date,
+    else the earliest available)."""
+    if not prices:
+        return None
+    ordered = sorted(prices, key=lambda s: s.get("effective", ""))
+    chosen = ordered[0]
+    for snap in ordered:
+        if snap.get("effective", "") <= date_str:
+            chosen = snap
+    return chosen
+
+
+def cost_of_models(models_dict, snapshot):
+    """USD cost of one day's per-model token breakdown under a price snapshot."""
+    if not models_dict or not snapshot:
+        return 0.0
+    total = 0.0
+    for model, tk in models_dict.items():
+        r = _rate_for(snapshot, model)
+        if not r:
+            continue
+        total += (
+            tk.get("input", 0)        * r["input"]
+            + tk.get("output", 0)       * r["output"]
+            + tk.get("cache_read", 0)   * r["cache_read"]
+            + tk.get("cache_create", 0) * r["cache_write"]
+        ) / 1_000_000.0
+    return total
+
+
+def _current_price_snapshot():
+    return {"anthropic": dict(PRICES["anthropic"]), "openai": dict(PRICES["openai"])}
+
+
+def update_price_book(history_prices):
+    """Reflect the current PRICES while preserving history. Seeds a baseline
+    snapshot if empty; appends a today-dated snapshot when current rates differ
+    from the latest stored ones."""
+    cur = _current_price_snapshot()
+    rates = lambda s: {k: v for k, v in s.items() if k != "effective"}
+    if not history_prices:
+        return [{"effective": PRICE_EFFECTIVE, **cur}]
+    ordered = sorted(history_prices, key=lambda s: s.get("effective", ""))
+    if rates(ordered[-1]) == rates(cur):
+        return ordered
+    today = datetime.now().astimezone().date().isoformat()
+    ordered = [s for s in ordered if s.get("effective") != today]
+    ordered.append({"effective": today, **cur})
+    return sorted(ordered, key=lambda s: s.get("effective", ""))
+
+
+def apply_costs(merged_months, prices):
+    """Attach day['cost'] and month['cost_total'] from per-model tokens and the
+    date-effective price snapshot. Returns the grand total across months."""
+    grand = 0.0
+    for mkey, mval in merged_months.items():
+        mtotal = 0.0
+        for dkey, day in mval.get("days", {}).items():
+            snap = _snapshot_for_date(prices, f"{mkey}-{dkey}")
+            c = cost_of_models(day.get("models"), snap)
+            day["cost"] = round(c, 4)
+            mtotal += c
+        mval["cost_total"] = round(mtotal, 2)
+        grand += mtotal
+    return round(grand, 2)
+
+
 def _sanitize_svg(svg_text):
     """Inline-friendly the SVG: drop XML PI / comments / <title>, force
     currentColor fill, strip width/height so CSS controls size."""
@@ -142,6 +270,7 @@ def extract_tokens(obj):
         "output": int(usage.get("output_tokens") or 0),
         "cache_read": int(usage.get("cache_read_input_tokens") or 0),
         "cache_create": int(usage.get("cache_creation_input_tokens") or 0),
+        "model": normalize_model(msg.get("model")),
     }
 
 
@@ -220,9 +349,10 @@ def collect_claude():
     return events, session_meta
 
 
-def _codex_tokens_from_event(payload):
+def _codex_tokens_from_event(payload, model=None):
     """Codex `event_msg.payload.type=token_count` carries per-turn usage in
-    `last_token_usage`. Map onto the same shape as Claude's extract_tokens()."""
+    `last_token_usage`. Map onto the same shape as Claude's extract_tokens().
+    `model` is captured from the file's turn_context records (not the event)."""
     if not isinstance(payload, dict):
         return None
     if payload.get("type") != "token_count":
@@ -237,6 +367,7 @@ def _codex_tokens_from_event(payload):
               + int(usage.get("reasoning_output_tokens") or 0),
         "cache_read": int(usage.get("cached_input_tokens") or 0),
         "cache_create": 0,  # Codex has no cache-creation counter
+        "model": model,
     }
 
 
@@ -266,6 +397,7 @@ def collect_codex():
         file_sid = None
         file_proj = "unknown"
         file_title = ""
+        file_model = None
 
         for line in lines:
             try:
@@ -281,6 +413,10 @@ def collect_codex():
                 cwd = payload.get("cwd")
                 if cwd:
                     file_proj = project_name_from_cwd(cwd)
+            elif t == "turn_context":
+                mdl = payload.get("model") or obj.get("model")
+                if mdl:
+                    file_model = mdl
             elif t == "event_msg" and payload.get("type") == "user_message" and not file_title:
                 msg = payload.get("message")
                 if isinstance(msg, str) and msg.strip():
@@ -315,7 +451,8 @@ def collect_codex():
                 ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00")).astimezone()
             except ValueError:
                 continue
-            tokens = _codex_tokens_from_event(payload) if ptype == "token_count" else None
+            tokens = (_codex_tokens_from_event(payload, normalize_model(file_model))
+                      if ptype == "token_count" else None)
             events.append((ts, tokens, file_sid or "", file_proj, "codex"))
 
     events.sort(key=lambda e: e[0])
@@ -362,6 +499,10 @@ def build_buckets(events, gap_limit, cache_read_weight):
     daily_tokens = defaultdict(lambda: {
         "input": 0, "output": 0, "cache_read": 0, "cache_create": 0, "all": 0,
     })
+    # Per-model breakdown per day, for accurate API-cost pricing.
+    daily_models = defaultdict(lambda: defaultdict(lambda: {
+        "input": 0, "output": 0, "cache_read": 0, "cache_create": 0,
+    }))
 
     for i in range(1, len(events)):
         ts_prev = events[i - 1][0]
@@ -379,12 +520,17 @@ def build_buckets(events, gap_limit, cache_read_weight):
             tok["input"] + tok["output"] + tok["cache_create"]
             + int(tok["cache_read"] * cache_read_weight)
         )
-    return hour_b, session_b, daily_tokens
+        model = tok.get("model")
+        if model:
+            mb = daily_models[k][model]
+            for f in ("input", "output", "cache_read", "cache_create"):
+                mb[f] += tok[f]
+    return hour_b, session_b, daily_tokens, daily_models
 
 
-def shape_output(hour_b, session_b, daily_tokens, session_meta):
+def shape_output(hour_b, session_b, daily_tokens, daily_models, session_meta):
     months = defaultdict(lambda: defaultdict(lambda: {
-        "hours": {}, "sessions": {}, "total": 0, "tokens": None,
+        "hours": {}, "sessions": {}, "total": 0, "tokens": None, "models": None,
     }))
     for (y, m, d, h), sec in hour_b.items():
         if sec <= 0:
@@ -413,6 +559,11 @@ def shape_output(hour_b, session_b, daily_tokens, session_meta):
 
     for (y, m, d), tk in daily_tokens.items():
         months[f"{y:04d}-{m:02d}"][f"{d:02d}"]["tokens"] = tk
+
+    for (y, m, d), mm in daily_models.items():
+        months[f"{y:04d}-{m:02d}"][f"{d:02d}"]["models"] = {
+            mdl: dict(v) for mdl, v in mm.items()
+        }
 
     out = {}
     for mkey, days in months.items():
@@ -467,6 +618,21 @@ def merge_tokens(a, b):
     return {k: max(a.get(k, 0), b.get(k, 0)) for k in set(a) | set(b)}
 
 
+def merge_models(a, b):
+    """Per-model, per-token-type max — same pruning-safe semantics as tokens."""
+    if not a and not b:
+        return None
+    out = {}
+    for mdl in set(a or {}) | set(b or {}):
+        av = (a or {}).get(mdl, {})
+        bv = (b or {}).get(mdl, {})
+        out[mdl] = {
+            f: max(av.get(f, 0), bv.get(f, 0))
+            for f in ("input", "output", "cache_read", "cache_create")
+        }
+    return out
+
+
 def merge_months(current, history):
     merged = {}
     for mkey in set(current) | set(history):
@@ -481,6 +647,7 @@ def merge_months(current, history):
                 "hours": hours,
                 "sessions": merge_sessions(cd.get("sessions", {}), hd.get("sessions", {})),
                 "tokens": merge_tokens(cd.get("tokens"), hd.get("tokens")),
+                "models": merge_models(cd.get("models"), hd.get("models")),
                 "total": sum(hours.values()),
             }
             days[dkey] = day
@@ -558,6 +725,18 @@ def _load_history_sources(history_file):
     return out
 
 
+def _load_history_prices(history_file):
+    """Return the stored list of dated price snapshots (empty if none)."""
+    if not history_file.exists():
+        return []
+    try:
+        raw = json.loads(history_file.read_text())
+    except (json.JSONDecodeError, OSError):
+        return []
+    p = raw.get("prices")
+    return p if isinstance(p, list) else []
+
+
 def _fmt_hours(secs):
     return f"{int(secs // 3600)} h {int((secs % 3600) // 60)} min"
 
@@ -591,14 +770,16 @@ def main():
 
     print("Building buckets ...")
     history_by_source = _load_history_sources(history_file)
+    price_book = update_price_book(_load_history_prices(history_file))
     sources_payload = {}
     sources_history = {}
 
     for src in SOURCES:
         ev = events_by_source[src]
-        hour_b, sess_b, day_tok = build_buckets(ev, gap_limit, cache_read_weight)
-        current_months = shape_output(hour_b, sess_b, day_tok, session_meta)
+        hour_b, sess_b, day_tok, day_models = build_buckets(ev, gap_limit, cache_read_weight)
+        current_months = shape_output(hour_b, sess_b, day_tok, day_models, session_meta)
         merged_months = merge_months(current_months, history_by_source.get(src, {}))
+        total_cost = apply_costs(merged_months, price_book)
         available = sorted(merged_months.keys())
         total_sec_run = sum(hour_b.values())
         total_sec_merged = sum(m["total"] for m in merged_months.values())
@@ -608,12 +789,13 @@ def main():
             "months": merged_months,
             "total_seconds": total_sec_merged,
             "total_tokens": total_tokens,
+            "total_cost": total_cost,
             "events_count": len(ev),
         }
         sources_history[src] = {"months": merged_months}
         print(f"  [{src:>6}] this run: {_fmt_hours(total_sec_run)} · "
               f"merged: {_fmt_hours(total_sec_merged)} · "
-              f"tokens: {total_tokens:,}")
+              f"tokens: {total_tokens:,} · ~${total_cost:,.0f} API")
 
     # Persist history with new schema (drop legacy top-level "months" key).
     history_file.parent.mkdir(parents=True, exist_ok=True)
@@ -626,7 +808,8 @@ def main():
             pass
     history_file.write_text(json.dumps(
         {"updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-         "sources": sources_history},
+         "sources": sources_history,
+         "prices": price_book},
         ensure_ascii=False, indent=2,
     ))
 

@@ -22,6 +22,15 @@ services.
   exact hour
 - Daily token totals (input + output + cache, weighted) per month — split by
   source via the toggle
+- **Estimated API cost** — what your usage *would* have cost on pay-as-you-go
+  API pricing, computed **per model** (Opus / Sonnet / Haiku / Codex) from the
+  exact input / output / cache-write / cache-read token split. Shown as a
+  sidebar KPI and per day in the totals tooltip (alongside that day's tokens)
+- **Historical pricing** — each run records the current price table into
+  `history.json` with an effective date; old snapshots are never deleted, so
+  every day is costed at the rates in effect on that day (past months are not
+  re-priced when rates change)
+- **Today's column is highlighted** when viewing the current month
 - **Persistent history.json** — survives Claude/Codex pruning old session files,
   with a one-step `history.json.bak` rollback written before every update
 - Configurable: work days, work hours, gap threshold, first day of week,
@@ -93,8 +102,15 @@ threshold, auto-open, first day of week) and saves the answers to
 3. **Day categorisation** uses `work_days` + `work_intervals`:
    `work` (in-window weekday), `off` (out-of-window weekday), `wknd`
    (non-work day).
-4. **Tokens**: every `assistant` event's `usage` block is summed per day.
-5. Output is merged with `~/.claude-activity/history.json` so months Claude
+4. **Tokens**: every `assistant` event's `usage` block is summed per day,
+   broken down by model and by type (input / output / cache-write / cache-read).
+5. **API cost**: each day's per-model tokens are multiplied by that model's
+   published per-token rates (input / output / cache-write / cache-read) using
+   the price snapshot effective on that date. Edit the `PRICES` table at the
+   top of `lib/generate.py` when a published rate changes — the next run appends
+   a new dated snapshot to `history.json` and keeps the old ones, so historical
+   months stay costed at their original rates.
+6. Output is merged with `~/.claude-activity/history.json` so months Claude
    Code later prunes from disk are preserved in the dashboard. Merge takes
    `max` per bucket — safe across pruning and re-runs.
 
