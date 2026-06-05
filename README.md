@@ -39,8 +39,9 @@ services.
 
 ## Install
 
-Inside Claude Code, add this GitHub repo as a plugin marketplace and install
-from it — no central publishing involved:
+Inside Claude Code, add this GitHub repo as a plugin source and install from it
+— no central publishing involved. These are two separate slash commands; run
+them one at a time, in order (the install needs the source added first):
 
 ```bash
 /plugin marketplace add kalatsch/claude-activity

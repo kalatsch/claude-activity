@@ -86,6 +86,20 @@
   }
   .card p.desc { color: var(--text-dim); font-size: 14px; margin: 8px 0 16px; padding-left: 38px; }
   .card p.desc.nopad { padding-left: 0; }
+  .card p.desc b { color: var(--text); font-weight: 600; }
+  .substep {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12.5px; color: var(--text-dim); font-weight: 600;
+    margin: 16px 0 7px;
+  }
+  .substep:first-of-type { margin-top: 4px; }
+  .substep i {
+    flex: none; width: 18px; height: 18px; border-radius: 6px;
+    display: grid; place-items: center; font-style: normal;
+    font-size: 11px; font-weight: 700;
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--text-faint);
+  }
+  .card.recommended .substep i { background: rgba(245,159,123,0.14); border-color: rgba(245,159,123,0.4); color: var(--claude); }
 
   /* ---- code block ---- */
   .code {
@@ -174,19 +188,23 @@
     <div class="card-head">
       <h2>Install from this repo</h2>
     </div>
-    <p class="desc nopad">Inside Claude&nbsp;Code, add this GitHub repo as a plugin marketplace and
-      install from it — no central publishing involved.</p>
-    <div class="code"><button class="copy">Copy</button><span class="p">/plugin</span> marketplace add kalatsch/claude-activity
-<span class="p">/plugin</span> install claude-activity@claude-activity</div>
+    <p class="desc nopad">Inside Claude&nbsp;Code — no central publishing involved. These are two separate
+      slash commands: run them <b>one at a time, in order</b>.</p>
+    <div class="substep"><i>1</i>Add this GitHub repo as a plugin source</div>
+    <div class="code"><button class="copy">Copy</button><span class="p">/plugin</span> marketplace add kalatsch/claude-activity</div>
+    <div class="substep"><i>2</i>Install the plugin from it</div>
+    <div class="code"><button class="copy">Copy</button><span class="p">/plugin</span> install claude-activity@claude-activity</div>
   </div>
 
   <div class="card">
     <div class="card-head">
       <h2>Update later</h2>
     </div>
-    <p class="desc nopad">Pull the latest version the same way — refresh the marketplace, then update.</p>
-    <div class="code"><button class="copy">Copy</button><span class="p">/plugin</span> marketplace update claude-activity
-<span class="p">/plugin</span> update claude-activity@claude-activity</div>
+    <p class="desc nopad">Same idea — again, one at a time, in order.</p>
+    <div class="substep"><i>1</i>Refresh the source</div>
+    <div class="code"><button class="copy">Copy</button><span class="p">/plugin</span> marketplace update claude-activity</div>
+    <div class="substep"><i>2</i>Update the plugin</div>
+    <div class="code"><button class="copy">Copy</button><span class="p">/plugin</span> update claude-activity@claude-activity</div>
   </div>
 
   <div class="section-label">After install</div>
