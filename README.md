@@ -39,6 +39,9 @@ services.
 
 ## Install
 
+> Sharing with teammates? Hand them [`docs/install.html`](docs/install.html) —
+> a self-contained page with copy-paste install commands.
+
 ### Via custom marketplace (recommended once published)
 
 ```bash
