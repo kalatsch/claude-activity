@@ -85,6 +85,7 @@
     padding: 3px 9px; border-radius: 999px;
   }
   .card p.desc { color: var(--text-dim); font-size: 14px; margin: 8px 0 16px; padding-left: 38px; }
+  .card p.desc.nopad { padding-left: 0; }
 
   /* ---- code block ---- */
   .code {
@@ -171,37 +172,21 @@
 
   <div class="card recommended">
     <div class="card-head">
-      <span class="step-no">1</span>
-      <h2>Via the marketplace</h2>
-      <span class="badge">Recommended</span>
+      <h2>Install from this repo</h2>
     </div>
-    <p class="desc">Two commands inside Claude&nbsp;Code. Updates later with <code style="color:var(--text-dim)">/plugin&nbsp;update</code>.</p>
+    <p class="desc nopad">Inside Claude&nbsp;Code, add this GitHub repo as a plugin marketplace and
+      install from it — no central publishing involved.</p>
     <div class="code"><button class="copy">Copy</button><span class="p">/plugin</span> marketplace add kalatsch/claude-activity
 <span class="p">/plugin</span> install claude-activity@claude-activity</div>
   </div>
 
   <div class="card">
     <div class="card-head">
-      <span class="step-no">2</span>
-      <h2>Manual / dev symlink</h2>
+      <h2>Update later</h2>
     </div>
-    <p class="desc">Clone and symlink into the plugin cache — handy while hacking on it.</p>
-    <div class="code"><button class="copy">Copy</button>git clone https://github.com/kalatsch/claude-activity.git
-<span class="c"># symlink it where Claude Code looks for local plugins</span>
-ln -s "$(pwd)/claude-activity" \
-      ~/.claude/plugins/cache/local/claude-activity/1</div>
-  </div>
-
-  <div class="card">
-    <div class="card-head">
-      <span class="step-no">3</span>
-      <h2>Standalone (no plugin)</h2>
-    </div>
-    <p class="desc">Just want the dashboard? Run the generator directly with Python&nbsp;3.</p>
-    <div class="code"><button class="copy">Copy</button>git clone https://github.com/kalatsch/claude-activity.git
-cd claude-activity
-python3 lib/generate.py <span class="c"># writes ~/.claude-activity/index.html</span>
-python3 lib/generate.py --open <span class="c"># …and opens it</span></div>
+    <p class="desc nopad">Pull the latest version the same way — refresh the marketplace, then update.</p>
+    <div class="code"><button class="copy">Copy</button><span class="p">/plugin</span> marketplace update claude-activity
+<span class="p">/plugin</span> update claude-activity@claude-activity</div>
   </div>
 
   <div class="section-label">After install</div>

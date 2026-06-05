@@ -39,32 +39,23 @@ services.
 
 ## Install
 
-> Sharing with teammates? Hand them [`docs/install.html`](docs/install.html) —
-> a self-contained page with copy-paste install commands.
-
-### Via custom marketplace (recommended once published)
+Inside Claude Code, add this GitHub repo as a plugin marketplace and install
+from it — no central publishing involved:
 
 ```bash
 /plugin marketplace add kalatsch/claude-activity
 /plugin install claude-activity@claude-activity
 ```
 
-### Manual install / development symlink
+To update later:
 
 ```bash
-git clone https://github.com/kalatsch/claude-activity.git
-ln -s "$(pwd)/claude-activity" \
-      ~/.claude/plugins/cache/local/claude-activity/1.0.0
+/plugin marketplace update claude-activity
+/plugin update claude-activity@claude-activity
 ```
 
-### Standalone (no Claude Code plugin)
-
-```bash
-git clone https://github.com/kalatsch/claude-activity.git
-cd claude-activity
-python3 lib/generate.py            # writes ~/.claude-activity/index.html
-python3 lib/generate.py --open     # also opens it in the browser
-```
+> Sharing with teammates? Hand them [`docs/install.html`](docs/install.html) —
+> a self-contained page with the same copy-paste commands.
 
 ## Usage
 
