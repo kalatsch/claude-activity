@@ -148,6 +148,32 @@
     margin: 34px 0 14px;
   }
 
+  /* ---- settings reference ---- */
+  .settings-intro { color: var(--text-dim); font-size: 14px; margin: 0 0 6px; }
+  .settings-intro code, .set-desc code {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px;
+    color: var(--text); background: var(--panel-2); padding: 1px 6px; border-radius: 5px;
+  }
+  .setting { padding: 16px 0; border-bottom: 1px solid var(--border-soft); }
+  .setting:last-child { border-bottom: none; padding-bottom: 0; }
+  .set-top { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+  .set-key {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 14.5px; font-weight: 700; color: var(--text);
+  }
+  .set-default {
+    font-size: 11px; color: var(--text-dim);
+    background: var(--panel); border: 1px solid var(--border);
+    padding: 2px 8px; border-radius: 999px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  .set-default::before { content: "default "; color: var(--text-faint); }
+  .set-desc { color: var(--text-dim); font-size: 14px; line-height: 1.6; }
+  .set-desc b { color: var(--text); font-weight: 600; }
+  .set-desc .g { color: var(--green); font-weight: 600; }
+  .set-desc .y { color: var(--yellow); font-weight: 600; }
+  .set-desc .r { color: var(--red); font-weight: 600; }
+
   footer {
     margin-top: 44px; padding-top: 20px; border-top: 1px solid var(--border-soft);
     color: var(--text-faint); font-size: 13px;
@@ -226,6 +252,60 @@
         <li>Reads <code>~/.claude/projects</code> &amp; <code>~/.codex/sessions</code></li>
         <li>Writes only to <code>~/.claude-activity</code></li>
       </ul>
+    </div>
+  </div>
+
+  <div class="section-label">Settings</div>
+  <div class="card">
+    <p class="settings-intro">All options live in <code>~/.claude-activity/config.json</code>. Set them with the
+      <code>/activity --settings</code> wizard, or edit the file by hand — changes apply on the next
+      <code>/activity</code> run (your history is preserved).</p>
+
+    <div class="setting">
+      <div class="set-top"><span class="set-key">gap_minutes</span><span class="set-default">10</span></div>
+      <div class="set-desc">Longest pause between two actions that still counts as <b>continuous work</b>. Time is
+        summed only across events closer together than this. <b>Lower</b> (e.g. 5) is stricter — ignores short idle, so
+        less total time; <b>higher</b> (e.g. 30) is lenient — bridges longer breaks, so more total time. This single
+        number defines how “time worked” is measured.</div>
+    </div>
+
+    <div class="setting">
+      <div class="set-top"><span class="set-key">work_intervals</span><span class="set-default">[[9, 18]]</span></div>
+      <div class="set-desc">Which hours of a <b>work day</b> count as working hours — a list of <code>[start, end)</code>
+        pairs (0–23, end excluded). Inside the window → <span class="g">work (green)</span>; outside → <span class="y">off-hours (yellow)</span>.
+        Use two ranges to carve out lunch, e.g. <code>[[9, 13], [14, 18]]</code>.</div>
+    </div>
+
+    <div class="setting">
+      <div class="set-top"><span class="set-key">work_days</span><span class="set-default">[0, 1, 2, 3, 4]</span></div>
+      <div class="set-desc">Which weekdays are work days — <code>0</code>=Mon … <code>6</code>=Sun. Listed days are split into
+        work / off-hours by <code>work_intervals</code>; any day <b>not</b> listed renders entirely as
+        <span class="r">weekend (red)</span>.</div>
+    </div>
+
+    <div class="setting">
+      <div class="set-top"><span class="set-key">first_day_of_week</span><span class="set-default">0</span></div>
+      <div class="set-desc">Only the column order of the <b>“By day of week”</b> chart. <code>0</code>=Monday (ISO),
+        <code>6</code>=Sunday (US). Does not change any totals or colors.</div>
+    </div>
+
+    <div class="setting">
+      <div class="set-top"><span class="set-key">cache_read_weight</span><span class="set-default">0.1</span></div>
+      <div class="set-desc">How much cached-input tokens count toward the <b>“billable tokens”</b> figure (cache reads cost
+        roughly 10% of fresh input). Affects only the displayed token <i>count</i> — the <b>API cost</b> number uses
+        each model’s real cache-read price and ignores this weight.</div>
+    </div>
+
+    <div class="setting">
+      <div class="set-top"><span class="set-key">auto_open</span><span class="set-default">true</span></div>
+      <div class="set-desc">Open the dashboard in your browser right after it’s generated. Run
+        <code>/activity --no-open</code> to skip it for a single run.</div>
+    </div>
+
+    <div class="setting">
+      <div class="set-top"><span class="set-key">output_dir</span><span class="set-default">~/.claude-activity</span></div>
+      <div class="set-desc">Where <code>index.html</code> and <code>history.json</code> (plus the one-step
+        <code>history.json.bak</code> rollback) are written.</div>
     </div>
   </div>
 
