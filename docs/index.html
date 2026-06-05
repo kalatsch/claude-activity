@@ -257,8 +257,8 @@
 
   <div class="section-label">Settings</div>
   <div class="card">
-    <p class="settings-intro">All options live in <code>~/.claude-activity/config.json</code>. Set them with the
-      <code>/activity --settings</code> wizard, or edit the file by hand — changes apply on the next
+    <p class="settings-intro">The first-run wizard (re-run anytime with <code>/activity --settings</code>) asks for
+      these four. They're saved to <code>~/.claude-activity/config.json</code> and apply on the next
       <code>/activity</code> run (your history is preserved).</p>
 
     <div class="setting">
@@ -289,24 +289,6 @@
         <code>6</code>=Sunday (US). Does not change any totals or colors.</div>
     </div>
 
-    <div class="setting">
-      <div class="set-top"><span class="set-key">cache_read_weight</span><span class="set-default">0.1</span></div>
-      <div class="set-desc">How much cached-input tokens count toward the <b>“billable tokens”</b> figure (cache reads cost
-        roughly 10% of fresh input). Affects only the displayed token <i>count</i> — the <b>API cost</b> number uses
-        each model’s real cache-read price and ignores this weight.</div>
-    </div>
-
-    <div class="setting">
-      <div class="set-top"><span class="set-key">auto_open</span><span class="set-default">true</span></div>
-      <div class="set-desc">Open the dashboard in your browser right after it’s generated. Run
-        <code>/activity --no-open</code> to skip it for a single run.</div>
-    </div>
-
-    <div class="setting">
-      <div class="set-top"><span class="set-key">output_dir</span><span class="set-default">~/.claude-activity</span></div>
-      <div class="set-desc">Where <code>index.html</code> and <code>history.json</code> (plus the one-step
-        <code>history.json.bak</code> rollback) are written.</div>
-    </div>
   </div>
 
   <footer>
