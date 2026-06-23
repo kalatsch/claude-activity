@@ -242,19 +242,18 @@
       <span class="step-no">↻</span>
       <h2>Update to the latest version</h2>
     </div>
-    <p class="desc nopad">Run these <b>in your terminal</b> (outside Claude&nbsp;Code) — refresh the source,
-      then update the plugin:</p>
-    <div class="substep"><i>1</i>Refresh the marketplace source</div>
-    <div class="code"><button class="copy">Copy</button><span class="p">claude</span> plugin marketplace update claude-activity</div>
-    <div class="substep"><i>2</i>Update the plugin</div>
-    <div class="code"><button class="copy">Copy</button><span class="p">claude</span> plugin update claude-activity@claude-activity</div>
-    <div class="substep"><i>3</i>Load it into a running session</div>
+    <p class="desc nopad">Open the plugin menu, then on the <b>Installed</b> tab select
+      <b>claude-activity</b> and choose <b>Update&nbsp;now</b>:</p>
+    <div class="substep"><i>1</i>Open the plugin menu → Installed → Update&nbsp;now</div>
+    <div class="code"><button class="copy">Copy</button><span class="p">/plugin</span></div>
+    <div class="substep"><i>2</i>Load it into the running session</div>
     <div class="code"><button class="copy">Copy</button><span class="p">/reload-plugins</span></div>
   </div>
 
-  <p class="note"><span class="ico">↻</span><span>Step&nbsp;3 only <b>loads</b> the already-fetched version —
-    on its own it won't pull a new one, so steps&nbsp;1–2 come first (or just start a new session). No terminal?
-    The interactive <code>/plugin</code> menu can refresh marketplaces and update installed plugins too.</span></p>
+  <p class="note"><span class="ico">↻</span><span><b>Says it's already current</b> but you know a new version
+    shipped? The catalog is stale — in <code>/plugin</code> → <b>Marketplaces</b>, update this marketplace,
+    then <b>Update&nbsp;now</b> again. Prefer the terminal? <code>claude plugin update
+    claude-activity@claude-activity</code> does the same.</span></p>
 
   <div class="section-label">After install</div>
   <div class="mini-grid">
