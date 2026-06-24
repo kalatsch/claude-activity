@@ -64,6 +64,11 @@ LOGO_FILES = {
 
 SOURCES = ("both", "claude", "codex")
 
+# Max distinct (project, title, source) entries kept per hour. The tooltip shows
+# only the top few, but the client also aggregates this list by project for the
+# project filter, so keep enough that a busy hour isn't truncated.
+MAX_SESSIONS_PER_HOUR = 30
+
 
 # ---------- Token pricing (USD per million tokens) ----------
 # Each run records the current snapshot into history.json tagged with an
@@ -253,8 +258,19 @@ def load_config():
 def project_name_from_cwd(cwd):
     if not cwd:
         return "unknown"
-    parts = cwd.rstrip("/").split("/")
-    return parts[-1] if parts else cwd
+    p = Path(cwd)
+    # Attribute to the enclosing git repo's folder name, so work in a nested
+    # subdirectory (e.g. <repo>/docs/specs or
+    # <repo>/docs/product-team/<ticket>) rolls up to the repo instead of
+    # surfacing the leaf folder as its own "project". Falls back to the leaf
+    # segment when the path is not inside a git repo (or no longer exists).
+    for anc in (p, *p.parents):
+        try:
+            if (anc / ".git").exists():
+                return anc.name or cwd
+        except OSError:
+            break
+    return p.name or cwd
 
 
 def extract_tokens(obj):
@@ -556,7 +572,7 @@ def shape_output(hour_b, session_b, daily_tokens, daily_models, session_meta):
         ]
         items.sort(key=lambda x: -x["sec"])
         if items:
-            months[f"{y:04d}-{m:02d}"][f"{d:02d}"]["sessions"][str(h)] = items[:6]
+            months[f"{y:04d}-{m:02d}"][f"{d:02d}"]["sessions"][str(h)] = items[:MAX_SESSIONS_PER_HOUR]
 
     for (y, m, d), tk in daily_tokens.items():
         months[f"{y:04d}-{m:02d}"][f"{d:02d}"]["tokens"] = tk
@@ -604,7 +620,7 @@ def merge_sessions(a, b):
             [{"project": p, "title": t, "source": s, "sec": sec}
              for (p, t, s), sec in by_key.items()],
             key=lambda x: -x["sec"],
-        )[:6]
+        )[:MAX_SESSIONS_PER_HOUR]
         out[hkey] = merged
     return out
 

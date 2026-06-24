@@ -371,6 +371,45 @@
   .source-toggle button[aria-pressed="true"] .src-h {
     color: var(--accent);
   }
+
+  /* Project filter — native <select> styled to match the toggle chrome */
+  .project-filter {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    height: 32px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0 26px 0 11px;
+  }
+  .project-filter::after {
+    content: "";
+    position: absolute;
+    right: 11px;
+    width: 7px; height: 7px;
+    border-right: 2px solid var(--text-dim);
+    border-bottom: 2px solid var(--text-dim);
+    transform: translateY(-2px) rotate(45deg);
+    pointer-events: none;
+  }
+  .project-filter select {
+    appearance: none;
+    -webkit-appearance: none;
+    background: transparent;
+    border: 0;
+    color: var(--text-dim);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    max-width: 240px;
+    text-overflow: ellipsis;
+  }
+  .project-filter select:focus { outline: none; }
+  .project-filter.active { box-shadow: inset 0 0 0 1px var(--border); }
+  .project-filter.active select { color: var(--accent); }
+
   .header { flex-wrap: wrap; }
   .month-label {
     font-size: 18px;
@@ -781,6 +820,11 @@
         Codex <span class="src-h" data-src-h="codex">—</span>
       </button>
     </div>
+    <div class="project-filter" id="projectFilter" title="Filter by project">
+      <select id="projectSelect" aria-label="Filter by project">
+        <option value="">All projects</option>
+      </select>
+    </div>
   </div>
 
   <div class="main">
@@ -863,10 +907,12 @@ function classifyCell(year, monthIdx, day, hour) {
 
 let DATA = null;
 let currentSource = "both";   // toggled by .source-toggle
+let currentProject = "";       // "" = all projects; set by #projectSelect
 let currentMonth = null;
 const today = new Date();
 const todayKey = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,"0")}`;
 const STORAGE_SOURCE_KEY = "claude-activity.source";
+const STORAGE_PROJECT_KEY = "claude-activity.project";
 
 // Inline SVG marks. Drawn from primitive shapes — not exact brand logos,
 // just recognizable cues. Use currentColor so badge styles control hue.
@@ -908,6 +954,60 @@ function getView() {
     available_months: DATA.available_months || [],
     total_seconds: DATA.sources[currentSource].total_seconds || 0,
   };
+}
+
+// ---- project filter ----
+// When a project is selected, a day's hour totals are re-derived from its
+// per-hour session list (summing only the matching project). With no project
+// selected, the precomputed day.hours / day.total are returned unchanged.
+function hoursOf(day) {
+  if (!day) return {};
+  if (!currentProject) return day.hours || {};
+  const out = {};
+  const sess = day.sessions || {};
+  for (const h in sess) {
+    let s = 0;
+    for (const it of sess[h]) if (it.project === currentProject) s += it.sec;
+    if (s > 0) out[h] = Math.round(s);
+  }
+  return out;
+}
+function totalOf(day) {
+  if (!day) return 0;
+  if (!currentProject) return day.total || 0;
+  const ho = hoursOf(day);
+  let t = 0;
+  for (const h in ho) t += ho[h];
+  return t;
+}
+function projectsInView() {
+  const set = new Set();
+  const months = (DATA.sources && DATA.sources[currentSource] && DATA.sources[currentSource].months) || {};
+  for (const mk in months) {
+    const days = months[mk].days || {};
+    for (const dk in days) {
+      const sess = days[dk].sessions || {};
+      for (const h in sess) for (const it of sess[h]) if (it.project) set.add(it.project);
+    }
+  }
+  return Array.from(set).sort((a, b) => a.localeCompare(b));
+}
+function rebuildProjectOptions() {
+  const sel = document.getElementById("projectSelect");
+  if (!sel) return;
+  const projs = projectsInView();
+  if (currentProject && !projs.includes(currentProject)) currentProject = "";
+  sel.innerHTML = '<option value="">All projects</option>' +
+    projs.map(p => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join("");
+  sel.value = currentProject;
+  document.getElementById("projectFilter").classList.toggle("active", !!currentProject);
+}
+function setProject(p) {
+  currentProject = p || "";
+  try { localStorage.setItem(STORAGE_PROJECT_KEY, currentProject); } catch (e) {}
+  document.getElementById("projectFilter").classList.toggle("active", !!currentProject);
+  renderGrid();
+  renderStats();
 }
 
 function levelFor(seconds) {
@@ -1052,6 +1152,7 @@ function setSource(src) {
   // Keep currentMonth even when the new source has no data for it.
   // setMonth() + renderStats() / renderGrid() degrade gracefully to an empty
   // heatmap and "No data" sidebar — that's what we want here.
+  rebuildProjectOptions();
   renderMonthPicker();
   setMonth(currentMonth);
 }
@@ -1078,6 +1179,8 @@ function initSourceToggle() {
   document.querySelectorAll("#sourceToggle button").forEach(b => {
     b.addEventListener("click", () => setSource(b.dataset.source));
   });
+  const psel = document.getElementById("projectSelect");
+  if (psel) psel.addEventListener("change", () => setProject(psel.value));
 }
 
 // Cell size is fixed (--cell-size from CSS, 24px) so neither viewport changes
@@ -1122,7 +1225,7 @@ function renderStats() {
     const d = Number(dkey);
     const dowJS = new Date(y, mm - 1, d).getDay(); // 0=Sun..6=Sat
     const dowMon = (dowJS + 6) % 7;
-    for (const [hkey, sec] of Object.entries(day.hours)) {
+    for (const [hkey, sec] of Object.entries(hoursOf(day))) {
       const h = Number(hkey);
       byHour[h] += sec;
       byDow[dowMon] += sec;
@@ -1134,7 +1237,7 @@ function renderStats() {
   }
   const total = work + off + wknd;
   const nonWork = off + wknd;
-  const activeDays = Object.keys(m.days).filter(d => m.days[d].total > 0).length;
+  const activeDays = Object.keys(m.days).filter(d => totalOf(m.days[d]) > 0).length;
   const avg = activeDays ? total / activeDays : 0;
 
   const pct = v => total > 0 ? Math.round((v / total) * 100) + "%" : "—";
@@ -1176,6 +1279,17 @@ function renderStats() {
 
   const totalTokens = m.tokens_total || 0;
   const totalCost = m.cost_total || 0;
+  // Tokens/cost are aggregated per day, not per project, so they can't be
+  // filtered — show a dash + hint while a project is selected.
+  const projFiltered = !!currentProject;
+  const tokensVal = projFiltered ? "—" : formatTokens(totalTokens);
+  const costVal = projFiltered ? "—" : formatMoney(totalCost);
+  const tokensNote = projFiltered
+    ? "not split by project — pick “All projects” for token totals"
+    : "input + output + cache_create + cache_read × 0.1";
+  const costNote = projFiltered
+    ? ""
+    : `if billed at ${currentSource === "codex" ? "OpenAI" : currentSource === "claude" ? "Anthropic" : "Anthropic + OpenAI"} API rates, per model`;
 
   const kpi = (label, value, pctStr) => `
     <div class="kpi">
@@ -1208,10 +1322,10 @@ function renderStats() {
      </div>
      <div class="group">
        <h4>Tokens</h4>
-       ${row("", "Used (billable)", formatTokens(totalTokens))}
-       <div class="row sub"><span class="label">input + output + cache_create + cache_read × 0.1</span><span class="value"></span></div>
-       ${row("total", "≈ API cost", formatMoney(totalCost))}
-       <div class="row sub"><span class="label">if billed at ${currentSource === "codex" ? "OpenAI" : currentSource === "claude" ? "Anthropic" : "Anthropic + OpenAI"} API rates, per model</span><span class="value"></span></div>
+       ${row("", "Used (billable)", tokensVal)}
+       <div class="row sub"><span class="label">${tokensNote}</span><span class="value"></span></div>
+       ${row("total", "≈ API cost", costVal)}
+       ${costNote ? `<div class="row sub"><span class="label">${costNote}</span><span class="value"></span></div>` : ""}
      </div>`;
 }
 
@@ -1219,6 +1333,10 @@ function renderGrid() {
   const m = getView().months[currentMonth];
   const [y, mm] = currentMonth.split("-").map(Number);
   const dn = daysInMonth(currentMonth);
+
+  // Per-day hour map + total, project-filter-aware (computed once per render).
+  const HRS = {}, TOT = {};
+  if (m) for (const dk in m.days) { HRS[dk] = hoursOf(m.days[dk]); TOT[dk] = totalOf(m.days[dk]); }
 
   // Highlight today's column, but only while viewing the current month.
   const isCurrentMonth = currentMonth === todayKey;
@@ -1241,7 +1359,7 @@ function renderGrid() {
     for (let d = 1; d <= dn; d++) {
       const dkey = String(d).padStart(2, "0");
       const day = m && m.days[dkey];
-      const sec = day && day.hours[String(h)] ? day.hours[String(h)] : 0;
+      const sec = (HRS[dkey] && HRS[dkey][String(h)]) || 0;
       const lvl = levelFor(sec);
       const kind = classifyCell(y, mm - 1, d, h);
       const cls = ["cell"];
@@ -1257,16 +1375,13 @@ function renderGrid() {
   // Bottom row: daily totals. Spacer row above is a single colspan'd cell
   // that draws a 1px divider; border-spacing puts equal 4px gaps on top and
   // bottom of it.
-  const maxDayTotal = m
-    ? Math.max(1, ...Object.values(m.days || {}).map(d => d.total || 0))
-    : 1;
+  const maxDayTotal = Math.max(1, ...Object.keys(TOT).map(dk => TOT[dk] || 0));
   html += `<tr class="totals-spacer"><td colspan="${dn + 1}"></td></tr>`;
 
   html += `<tr class="totals-row"><th class="row-label totals-label">Σ</th>`;
   for (let d = 1; d <= dn; d++) {
     const dkey = String(d).padStart(2, "0");
-    const day = m && m.days[dkey];
-    const total = day ? (day.total || 0) : 0;
+    const total = TOT[dkey] || 0;
     const ratio = maxDayTotal > 0 ? Math.min(1, total / maxDayTotal) : 0;
     // Empty days stay near the panel-2 tone; populated days ramp toward white.
     const opacity = total > 0 ? (0.12 + ratio * 0.88).toFixed(3) : 0;
@@ -1309,8 +1424,8 @@ function attachTooltip() {
       // Time-of-day split (work / off / weekend) for the CURRENT source view
       const day = m && m.days[dkey];
       let work = 0, off = 0, wknd = 0;
-      if (day && day.hours) {
-        for (const [hkey, sec] of Object.entries(day.hours)) {
+      if (day) {
+        for (const [hkey, sec] of Object.entries(hoursOf(day))) {
           const h = Number(hkey);
           const t = classifyCell(y, mm - 1, d, h);
           if (t === "work") work += sec;
@@ -1416,7 +1531,11 @@ function attachTooltip() {
       const wd = WEEKDAY_NAMES_SHORT[date.getDay()];
       const dkey = String(d).padStart(2, "0");
       const day = m && m.days[dkey];
-      const sessions = day && day.sessions ? day.sessions[h] : null;
+      let sessions = day && day.sessions ? day.sessions[h] : null;
+      // Respect the project filter, and cap the displayed rows (the stored list
+      // is intentionally larger than what we show, so the filter sees everything).
+      if (sessions && currentProject) sessions = sessions.filter(it => it.project === currentProject);
+      if (sessions) sessions = sessions.slice(0, 6);
 
       let html =
         `<div class="t-head">${formatDuration(s)}</div>` +
@@ -1493,6 +1612,10 @@ if (!window.CLAUDE_ACTIVITY_DATA) {
     const stored = localStorage.getItem(STORAGE_SOURCE_KEY);
     if (stored && DATA.sources && DATA.sources[stored]) initialSource = stored;
   } catch (e) {}
+  try {
+    const sp = localStorage.getItem(STORAGE_PROJECT_KEY);
+    if (sp) currentProject = sp;
+  } catch (e) {}
 
   applyBrandIcons(DATA.icons);
   initSourceToggle();
@@ -1514,10 +1637,15 @@ if (!window.CLAUDE_ACTIVITY_DATA) {
       : getView().available_months[getView().available_months.length - 1];
     renderMonthPicker();
     setMonth(currentMonth);
+    rebuildProjectOptions();
 
     // Now flip to the user's actual preferred source (cell size already locked).
     if (initialSource !== "both" && DATA.sources[initialSource]) {
       setSource(initialSource);
+    } else if (currentProject) {
+      // Apply a stored project filter on the default source.
+      renderGrid();
+      renderStats();
     }
 
     const gen = new Date(DATA.generated_at);
