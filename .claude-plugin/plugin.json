@@ -1,6 +1,6 @@
 {
   "name": "claude-activity",
-  "version": "1.5.2",
+  "version": "1.6.0",
   "description": "Local heatmap of your Claude Code and Codex CLI activity — hour × day grid, work/off/weekend breakdown, per-project session tooltips, daily token totals, and estimated API cost (per model, with historical pricing). Today's column is highlighted. Self-contained HTML dashboard built from ~/.claude/projects and ~/.codex/sessions JSONL logs; persistent history survives log pruning. No server, no telemetry.",
   "author": {
     "name": "kalatsch",
