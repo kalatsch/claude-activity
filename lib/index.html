@@ -800,11 +800,16 @@
     white-space: nowrap;
     z-index: 10;
     opacity: 0;
-    transform: translate(-50%, -100%);
-    transition: opacity 0.08s;
+    transform: translate(-50%, -100%) translateY(5px) scale(0.97);
+    transform-origin: bottom center;
+    transition: opacity 0.12s ease, transform 0.16s cubic-bezier(.2,.7,.3,1);
     box-shadow: 0 6px 16px rgba(0,0,0,0.4);
   }
-  #tooltip.show { opacity: 1; }
+  #tooltip.show { opacity: 1; transform: translate(-50%, -100%) translateY(0) scale(1); }
+  @media (prefers-reduced-motion: reduce) {
+    #tooltip { transition: opacity 0.1s ease; transform: translate(-50%, -100%); }
+    #tooltip.show { transform: translate(-50%, -100%); }
+  }
   #tooltip { width: 360px; white-space: normal; box-sizing: border-box; }
   #tooltip .t-head { font-weight: 600; margin-bottom: 2px; }
   #tooltip .t-dim { color: var(--text-dim); font-size: 11px; }
@@ -1783,7 +1788,6 @@ function attachTooltip() {
       const r = td.getBoundingClientRect();
       tt.style.left = (r.left + r.width / 2) + "px";
       tt.style.top = (r.top - 6) + "px";
-      tt.style.transform = "translate(-50%, -100%)";
       tt.classList.add("show");
     });
     td.addEventListener("mouseleave", () => tt.classList.remove("show"));
