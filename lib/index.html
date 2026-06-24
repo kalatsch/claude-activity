@@ -110,7 +110,7 @@
   }
   .stats-card .row.sub .label { padding-left: 12px; color: var(--text-dim); font-size: 12px; line-height: 1.45; text-wrap: balance; }
   .stats-card .row.sub .value { font-size: 12px; }
-  .stats-card .row.total .label { font-weight: 500; color: var(--text); }
+  .stats-card .row.total .label { font-weight: 500; color: var(--text-dim); }
   .stats-card .row.total .value { font-weight: 600; font-size: 14px; }
   .stats-card .row.total:first-child .value { font-size: 24px; font-weight: 600; letter-spacing: -0.01em; }
   .stats-card .pct { color: var(--text-dim); font-size: 11px; margin-left: 6px; }
@@ -372,6 +372,7 @@
 
   /* Source toggle (Both / Claude / Codex) */
   .source-toggle {
+    position: relative;
     display: inline-flex;
     background: var(--panel);
     border: 1px solid var(--border);
@@ -380,7 +381,16 @@
     height: 32px;
     gap: 2px;
   }
+  /* Sliding active-tab indicator */
+  .src-pill {
+    position: absolute; top: 3px; bottom: 3px; left: 0; width: 0;
+    border-radius: 6px; background: var(--panel-2);
+    box-shadow: inset 0 0 0 1px var(--border); z-index: 0; pointer-events: none;
+  }
+  .source-toggle.ready .src-pill { transition: left 0.22s cubic-bezier(.4,0,.2,1), width 0.22s cubic-bezier(.4,0,.2,1); }
   .source-toggle button {
+    position: relative;
+    z-index: 1;
     background: transparent;
     color: var(--text-dim);
     border: 0;
@@ -395,16 +405,13 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+    transition: color 0.2s ease;
   }
   .source-toggle button:hover:not([aria-pressed="true"]) {
     color: var(--text);
-    background: var(--panel-2);
   }
   .source-toggle button[aria-pressed="true"] {
-    background: var(--panel-2);
     color: var(--text);
-    box-shadow: inset 0 0 0 1px var(--border);
   }
   .source-toggle button .src-h {
     color: var(--text-faint);
@@ -601,10 +608,23 @@
   .info-pop:not([hidden]) {
     animation: dropIn 0.16s ease;
   }
+  /* Exit: slide down + fade out (JS adds .closing, then sets hidden on end) */
+  @keyframes dropOut {
+    from { opacity: 1; transform: translateY(0); }
+    to   { opacity: 0; transform: translateY(8px); }
+  }
+  .month-select-menu.closing,
+  .proj-select-menu.closing,
+  .info-pop.closing {
+    animation: dropOut 0.14s ease forwards;
+  }
   @media (prefers-reduced-motion: reduce) {
     .month-select-menu:not([hidden]),
     .proj-select-menu:not([hidden]),
-    .info-pop:not([hidden]) { animation: none; }
+    .info-pop:not([hidden]),
+    .month-select-menu.closing,
+    .proj-select-menu.closing,
+    .info-pop.closing { animation: none; }
   }
   .totals {
     color: var(--text-dim);
@@ -936,6 +956,7 @@
       </button>
     </div>
     <div class="source-toggle" id="sourceToggle" role="tablist" aria-label="Data source">
+      <span class="src-pill" id="srcPill"></span>
       <button type="button" data-source="both"   role="tab" aria-pressed="true">
         <span class="src-icons"><span class="src-ico src-ico-claude" data-ico="claude"></span><span class="src-ico src-ico-codex" data-ico="codex"></span></span>
         Both <span class="src-h" data-src-h="both">—</span>
@@ -1146,13 +1167,22 @@ function updateProjectTrigger() {
   document.querySelectorAll("#projectSelectMenu .proj-select-item").forEach(b =>
     b.setAttribute("aria-selected", b.dataset.value === currentProject ? "true" : "false"));
 }
+// Hide a dropdown/popover with the exit animation, then set [hidden].
+function animateHide(menu) {
+  if (!menu || menu.hidden) return;
+  if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) { menu.hidden = true; return; }
+  menu.classList.add("closing");
+  const fin = () => { if (!menu.classList.contains("closing")) return; menu.classList.remove("closing"); menu.hidden = true; };
+  menu.addEventListener("animationend", fin, { once: true });
+  setTimeout(fin, 220);  // fallback if animationend doesn't fire
+}
 function openProjectSelect() {
-  document.getElementById("projectSelectMenu").hidden = false;
+  const menu = document.getElementById("projectSelectMenu");
+  menu.classList.remove("closing"); menu.hidden = false;
   document.getElementById("projectSelectTrigger").setAttribute("aria-expanded", "true");
 }
 function closeProjectSelect() {
-  const menu = document.getElementById("projectSelectMenu");
-  if (menu) menu.hidden = true;
+  animateHide(document.getElementById("projectSelectMenu"));
   const t = document.getElementById("projectSelectTrigger");
   if (t) t.setAttribute("aria-expanded", "false");
 }
@@ -1255,11 +1285,12 @@ function renderMonthPicker() {
 }
 
 function openMonthSelect() {
-  document.getElementById("monthSelectMenu").hidden = false;
+  const menu = document.getElementById("monthSelectMenu");
+  menu.classList.remove("closing"); menu.hidden = false;
   document.getElementById("monthSelectTrigger").setAttribute("aria-expanded", "true");
 }
 function closeMonthSelect() {
-  document.getElementById("monthSelectMenu").hidden = true;
+  animateHide(document.getElementById("monthSelectMenu"));
   document.getElementById("monthSelectTrigger").setAttribute("aria-expanded", "false");
 }
 function updateMonthSelectSelection() {
@@ -1311,6 +1342,15 @@ function setSource(src) {
   setMonth(currentMonth);
 }
 
+// Slide the active-tab pill under the pressed source button.
+function positionSrcPill() {
+  const pill = document.getElementById("srcPill");
+  const btn = document.querySelector('#sourceToggle button[aria-pressed="true"]');
+  if (!pill || !btn) return;
+  pill.style.left = btn.offsetLeft + "px";
+  pill.style.width = btn.offsetWidth + "px";
+}
+
 function updateToggleLabels() {
   // Show per-source total for the currently-visible month, so the number
   // matches what's displayed in the sidebar. Updates on every setMonth().
@@ -1322,6 +1362,7 @@ function updateToggleLabels() {
     const el = document.querySelector(`[data-src-h="${src}"]`);
     if (el) el.textContent = h > 0 ? `${h}h` : "—";
   }
+  positionSrcPill();  // button widths change with the labels above
 }
 
 function initSourceToggle() {
@@ -1352,6 +1393,13 @@ function initSourceToggle() {
     });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeProjectSelect(); });
   }
+  // Position the tab pill now (instant), then enable its slide transition so
+  // only later switches animate — no slide-from-zero on first paint.
+  requestAnimationFrame(() => {
+    positionSrcPill();
+    const st = document.getElementById("sourceToggle");
+    if (st) requestAnimationFrame(() => st.classList.add("ready"));
+  });
 }
 
 // Cell size is fixed (--cell-size from CSS, 24px) so neither viewport changes
@@ -1839,18 +1887,18 @@ if (!window.CLAUDE_ACTIVITY_DATA) {
     const infoBtn = document.getElementById("infoBtn");
     const infoPop = document.getElementById("infoPop");
     if (infoBtn && infoPop) {
+      const closeInfo = () => { animateHide(infoPop); infoBtn.setAttribute("aria-expanded", "false"); };
       infoBtn.addEventListener("click", (e) => {
         e.stopPropagation();
-        const willOpen = infoPop.hidden;
-        infoPop.hidden = !willOpen;
-        infoBtn.setAttribute("aria-expanded", willOpen ? "true" : "false");
+        if (infoPop.hidden) { infoPop.classList.remove("closing"); infoPop.hidden = false; infoBtn.setAttribute("aria-expanded", "true"); }
+        else closeInfo();
       });
       document.addEventListener("click", (e) => {
         const w = document.getElementById("infoWrap");
-        if (w && !w.contains(e.target)) { infoPop.hidden = true; infoBtn.setAttribute("aria-expanded", "false"); }
+        if (w && !w.contains(e.target)) closeInfo();
       });
       document.addEventListener("keydown", (e) => {
-        if (e.key === "Escape") { infoPop.hidden = true; infoBtn.setAttribute("aria-expanded", "false"); }
+        if (e.key === "Escape") closeInfo();
       });
     }
   }
