@@ -298,6 +298,49 @@
     margin-bottom: 28px;
     line-height: 1.5;
   }
+
+  /* Title row + info popover */
+  .title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .info { position: relative; flex: none; }
+  .info-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 30px; height: 30px; border-radius: 8px;
+    background: var(--panel); border: 1px solid var(--border);
+    color: var(--text-dim); cursor: pointer; padding: 0;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+  }
+  .info-btn:hover, .info-btn[aria-expanded="true"] { background: var(--panel-2); color: var(--text); border-color: var(--text-faint); }
+  .info-btn svg { width: 17px; height: 17px; }
+  .info-pop {
+    position: absolute; top: calc(100% + 8px); right: 0;
+    width: 360px; max-width: 86vw; max-height: calc(100vh - 90px); overflow-y: auto;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px 18px; box-shadow: 0 12px 32px rgba(0,0,0,0.45); z-index: 40;
+    font-size: 13px; color: var(--text-dim); line-height: 1.5;
+  }
+  .info-pop[hidden] { display: none; }
+  .info-pop h3 {
+    margin: 14px 0 6px; font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--text-faint);
+  }
+  .info-pop h3:first-child { margin-top: 0; }
+  .info-pop p { margin: 0 0 6px; }
+  .info-pop code {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px;
+    color: var(--text); background: var(--panel-2); padding: 1px 5px; border-radius: 5px;
+  }
+  .info-settings { margin: 0; padding: 0; list-style: none; }
+  .info-settings li { margin: 7px 0; }
+  .info-settings b {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px;
+    font-weight: 600; color: var(--text);
+  }
+  .info-settings .def {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px;
+    color: var(--text-dim); background: var(--panel-2);
+    border: 1px solid var(--border); border-radius: 999px; padding: 1px 7px; margin-left: 4px;
+  }
+  .info-how { margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--border-soft); }
   .header {
     display: flex;
     align-items: center;
@@ -830,12 +873,33 @@
 </head>
 <body>
 <div class="wrap">
-  <h1 id="pageTitle">AI Code Activity</h1>
-  <div class="subtitle">
-    Sum of intervals between JSONL log events from Claude Code
-    (<code>~/.claude/projects</code>) and Codex CLI (<code>~/.codex/sessions</code>).
-    Gap threshold and work hours are configurable. Local time.
+  <div class="title-row">
+    <h1 id="pageTitle">AI Code Activity</h1>
+    <div class="info" id="infoWrap">
+      <button class="info-btn" id="infoBtn" type="button" aria-label="About &amp; settings" aria-expanded="false" title="About &amp; settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><line x1="12" y1="11" x2="12" y2="16"></line><circle cx="12" cy="7.6" r="0.7" fill="currentColor" stroke="none"></circle></svg>
+      </button>
+      <div class="info-pop" id="infoPop" role="dialog" aria-label="About this dashboard" hidden>
+        <h3>What this shows</h3>
+        <p>Active time is the sum of gaps between consecutive JSONL log events from
+          Claude&nbsp;Code (<code>~/.claude/projects</code>) and Codex&nbsp;CLI
+          (<code>~/.codex/sessions</code>), bucketed by hour&nbsp;×&nbsp;day. Local time.</p>
+        <h3>Snapshot</h3>
+        <p>This page is a static snapshot. For fresh data, re-run <code>/activity</code>
+          in Claude&nbsp;Code — your history is preserved across runs.</p>
+        <h3>Settings</h3>
+        <ul class="info-settings">
+          <li><b>gap_minutes</b><span class="def">10</span><br>longest pause still counted as continuous work.</li>
+          <li><b>work_intervals</b><span class="def">[[9, 18]]</span><br>working hours; inside = work (green), outside = off‑hours (yellow). Use two ranges to carve out lunch.</li>
+          <li><b>work_days</b><span class="def">[0–4]</span><br>work weekdays (0=Mon … 6=Sun); any day not listed renders as weekend (red).</li>
+          <li><b>first_day_of_week</b><span class="def">0</span><br>column order of the “by day of week” chart only (0=Mon, 6=Sun).</li>
+        </ul>
+        <p class="info-how">Edit <code>~/.claude-activity/config.json</code> and re-run
+          <code>/activity</code>, or run <code>/activity --settings</code> for the setup wizard.</p>
+      </div>
+    </div>
   </div>
+  <div class="subtitle" id="snapshot">—</div>
 
   <div class="header">
     <div class="month-select" id="monthSelectWrap">
@@ -919,9 +983,6 @@
     </aside>
   </div>
 
-  <div class="footer" id="footer">
-    For fresh data, close this tab and re-run <code>/activity</code> in Claude Code.
-  </div>
 </div>
 
 <div id="tooltip"></div>
@@ -1756,9 +1817,27 @@ if (!window.CLAUDE_ACTIVITY_DATA) {
       month: "short", day: "numeric", year: "numeric",
       hour: "2-digit", minute: "2-digit", hour12: false,
     });
-    document.getElementById("footer").innerHTML =
-      `Snapshot from <strong>${genFmt}</strong>. ` +
-      `For fresh data, close this tab and re-run <code>/activity</code> in Claude Code.`;
+    document.getElementById("snapshot").innerHTML =
+      `Snapshot from <strong>${genFmt}</strong> · local time`;
+
+    // Info popover (about + settings)
+    const infoBtn = document.getElementById("infoBtn");
+    const infoPop = document.getElementById("infoPop");
+    if (infoBtn && infoPop) {
+      infoBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const willOpen = infoPop.hidden;
+        infoPop.hidden = !willOpen;
+        infoBtn.setAttribute("aria-expanded", willOpen ? "true" : "false");
+      });
+      document.addEventListener("click", (e) => {
+        const w = document.getElementById("infoWrap");
+        if (w && !w.contains(e.target)) { infoPop.hidden = true; infoBtn.setAttribute("aria-expanded", "false"); }
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") { infoPop.hidden = true; infoBtn.setAttribute("aria-expanded", "false"); }
+      });
+    }
   }
 }
 </script>
