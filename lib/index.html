@@ -397,6 +397,7 @@
   .proj-select-trigger[aria-expanded="true"] { border-color: var(--text-faint); }
   .proj-select-value {
     width: 150px;            /* fixed: control stays put regardless of selection */
+    text-align: left;        /* <button> defaults to center; keep the label left */
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1348,19 +1349,29 @@ function renderStats() {
     </div>`;
   }).join("");
 
-  const totalTokens = m.tokens_total || 0;
-  const totalCost = m.cost_total || 0;
-  // Tokens/cost are aggregated per day, not per project, so they can't be
-  // filtered — show a dash + hint while a project is selected.
+  // Tokens/cost: month totals for "All projects"; under a project filter,
+  // sum that project's per-day share (proj_tokens / proj_cost). Archived months
+  // that predate per-project tracking have no proj data → show "—".
   const projFiltered = !!currentProject;
-  const tokensVal = projFiltered ? "—" : formatTokens(totalTokens);
-  const costVal = projFiltered ? "—" : formatMoney(totalCost);
-  const tokensNote = projFiltered
-    ? "not split by project — pick “All projects” for token totals"
-    : "input + output + cache‑create + 0.1 × cache‑read";
-  const costNote = projFiltered
-    ? ""
-    : "if billed at public API rates, per model";
+  let totalTokens = m.tokens_total || 0;
+  let totalCost = m.cost_total || 0;
+  let haveProjTokens = !projFiltered;
+  if (projFiltered) {
+    totalTokens = 0; totalCost = 0;
+    for (const dk in m.days) {
+      const d = m.days[dk];
+      if (d.proj_tokens) { haveProjTokens = true; totalTokens += d.proj_tokens[currentProject] || 0; }
+      if (d.proj_cost) totalCost += d.proj_cost[currentProject] || 0;
+    }
+  }
+  const tokensVal = haveProjTokens ? formatTokens(totalTokens) : "—";
+  const costVal = haveProjTokens ? formatMoney(totalCost) : "—";
+  const tokensNote = haveProjTokens
+    ? "input + output + cache‑create + 0.1 × cache‑read"
+    : "per-project tokens not tracked for this month";
+  const costNote = haveProjTokens
+    ? "if billed at public API rates, per model"
+    : "";
 
   const kpi = (label, value, pctStr) => `
     <div class="kpi">

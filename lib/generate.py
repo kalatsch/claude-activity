@@ -193,6 +193,12 @@ def apply_costs(merged_months, prices):
             c = cost_of_models(day.get("models"), snap)
             day["cost"] = round(c, 4)
             mtotal += c
+            pm = day.get("proj_models")
+            if pm:
+                day["proj_cost"] = {
+                    proj: round(cost_of_models(models, snap), 4)
+                    for proj, models in pm.items()
+                }
         mval["cost_total"] = round(mtotal, 2)
         grand += mtotal
     return round(grand, 2)
@@ -554,6 +560,12 @@ def build_buckets(events, gap_limit, cache_read_weight):
     daily_models = defaultdict(lambda: defaultdict(lambda: {
         "input": 0, "output": 0, "cache_read": 0, "cache_create": 0,
     }))
+    # Per-project: billable token total per day, and per-model split per day
+    # (so tokens/cost can be filtered by project too).
+    daily_proj_tokens = defaultdict(lambda: defaultdict(int))
+    daily_proj_models = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: {
+        "input": 0, "output": 0, "cache_read": 0, "cache_create": 0,
+    })))
 
     for i in range(1, len(events)):
         ts_prev = events[i - 1][0]
@@ -561,27 +573,37 @@ def build_buckets(events, gap_limit, cache_read_weight):
         if ts_cur - ts_prev <= gap_limit:
             distribute_interval(ts_prev, ts_cur, sid, hour_b, session_b)
 
-    for ts, tok, *_ in events:
+    for ev in events:
+        ts, tok = ev[0], ev[1]
         if not tok:
             continue
+        proj = ev[3] if len(ev) > 3 and ev[3] else "unknown"
         k = (ts.year, ts.month, ts.day)
         for f in ("input", "output", "cache_read", "cache_create"):
             daily_tokens[k][f] += tok[f]
-        daily_tokens[k]["all"] += (
+        billable = (
             tok["input"] + tok["output"] + tok["cache_create"]
             + int(tok["cache_read"] * cache_read_weight)
         )
+        daily_tokens[k]["all"] += billable
+        daily_proj_tokens[k][proj] += billable
         model = tok.get("model")
         if model:
             mb = daily_models[k][model]
+            pmb = daily_proj_models[k][proj][model]
             for f in ("input", "output", "cache_read", "cache_create"):
                 mb[f] += tok[f]
-    return hour_b, session_b, daily_tokens, daily_models
+                pmb[f] += tok[f]
+    return hour_b, session_b, daily_tokens, daily_models, daily_proj_tokens, daily_proj_models
 
 
-def shape_output(hour_b, session_b, daily_tokens, daily_models, session_meta):
+def shape_output(hour_b, session_b, daily_tokens, daily_models, session_meta,
+                 daily_proj_tokens=None, daily_proj_models=None):
+    daily_proj_tokens = daily_proj_tokens or {}
+    daily_proj_models = daily_proj_models or {}
     months = defaultdict(lambda: defaultdict(lambda: {
         "hours": {}, "sessions": {}, "total": 0, "tokens": None, "models": None,
+        "proj_tokens": None, "proj_models": None,
     }))
     for (y, m, d, h), sec in hour_b.items():
         if sec <= 0:
@@ -614,6 +636,15 @@ def shape_output(hour_b, session_b, daily_tokens, daily_models, session_meta):
     for (y, m, d), mm in daily_models.items():
         months[f"{y:04d}-{m:02d}"][f"{d:02d}"]["models"] = {
             mdl: dict(v) for mdl, v in mm.items()
+        }
+
+    for (y, m, d), pt in daily_proj_tokens.items():
+        months[f"{y:04d}-{m:02d}"][f"{d:02d}"]["proj_tokens"] = dict(pt)
+
+    for (y, m, d), pm in daily_proj_models.items():
+        months[f"{y:04d}-{m:02d}"][f"{d:02d}"]["proj_models"] = {
+            proj: {mdl: dict(v) for mdl, v in models.items()}
+            for proj, models in pm.items()
         }
 
     out = {}
@@ -684,6 +715,22 @@ def merge_models(a, b):
     return out
 
 
+def merge_proj_tokens(a, b):
+    """Per-project billable-token total — pruning-safe max, like merge_tokens."""
+    if not a and not b:
+        return None
+    return {p: max((a or {}).get(p, 0), (b or {}).get(p, 0))
+            for p in set(a or {}) | set(b or {})}
+
+
+def merge_proj_models(a, b):
+    """Per-project, per-model token split — merge_models per project."""
+    if not a and not b:
+        return None
+    return {p: merge_models((a or {}).get(p), (b or {}).get(p))
+            for p in set(a or {}) | set(b or {})}
+
+
 def merge_months(current, history):
     merged = {}
     for mkey in set(current) | set(history):
@@ -699,6 +746,8 @@ def merge_months(current, history):
                 "sessions": merge_sessions(cd.get("sessions", {}), hd.get("sessions", {})),
                 "tokens": merge_tokens(cd.get("tokens"), hd.get("tokens")),
                 "models": merge_models(cd.get("models"), hd.get("models")),
+                "proj_tokens": merge_proj_tokens(cd.get("proj_tokens"), hd.get("proj_tokens")),
+                "proj_models": merge_proj_models(cd.get("proj_models"), hd.get("proj_models")),
                 "total": sum(hours.values()),
             }
             days[dkey] = day
@@ -900,8 +949,9 @@ def main():
 
     for src in SOURCES:
         ev = events_by_source[src]
-        hour_b, sess_b, day_tok, day_models = build_buckets(ev, gap_limit, cache_read_weight)
-        current_months = shape_output(hour_b, sess_b, day_tok, day_models, session_meta)
+        hour_b, sess_b, day_tok, day_models, day_proj_tok, day_proj_models = build_buckets(ev, gap_limit, cache_read_weight)
+        current_months = shape_output(hour_b, sess_b, day_tok, day_models, session_meta,
+                                      day_proj_tok, day_proj_models)
         merged_months = merge_months(current_months, history_by_source.get(src, {}))
         total_cost = apply_costs(merged_months, price_book)
         available = sorted(merged_months.keys())
