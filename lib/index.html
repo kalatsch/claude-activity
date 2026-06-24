@@ -395,7 +395,7 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    transition: background 0.12s, color 0.12s;
+    transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
   }
   .source-toggle button:hover:not([aria-pressed="true"]) {
     color: var(--text);
@@ -526,17 +526,17 @@
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 6px 10px 6px 14px;
-    font-size: 13px;
+    font-size: 12px;
     font-family: inherit;
     font-weight: 500;
     cursor: pointer;
     outline: none;
     line-height: 1;
     height: 32px;
-    transition: background 0.12s, border-color 0.12s;
+    transition: background 0.12s, border-color 0.12s, color 0.12s;
   }
   .month-select-trigger:hover { background: var(--panel-2); border-color: var(--text-faint); }
-  .month-select-trigger[aria-expanded="true"] { border-color: var(--accent); }
+  .month-select-trigger[aria-expanded="true"] { border-color: var(--text-faint); }
   .month-select-chevron {
     color: var(--text-dim);
     transition: transform 0.15s;
@@ -548,8 +548,10 @@
   .month-select-menu {
     position: absolute;
     top: calc(100% + 6px);
+    left: 0;
     right: 0;
-    min-width: 160px;
+    max-height: calc(100vh - 80px);
+    overflow-y: auto;
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: 10px;
@@ -566,7 +568,7 @@
     align-items: center;
     justify-content: space-between;
     background: transparent;
-    color: var(--text);
+    color: var(--text-dim);
     border: 0;
     border-radius: 6px;
     padding: 8px 12px;
@@ -576,18 +578,34 @@
     text-align: left;
     transition: background 0.08s, color 0.08s;
   }
-  .month-select-item:hover { background: var(--panel-2); }
+  .month-select-item:hover { background: var(--panel-2); color: var(--text); }
   .month-select-item[aria-selected="true"] {
     background: var(--panel-2);
-    color: var(--accent);
+    color: var(--text);
     font-weight: 600;
   }
   .month-select-item .check {
     width: 14px; height: 14px;
-    color: var(--accent);
+    color: var(--text);
     opacity: 0;
   }
   .month-select-item[aria-selected="true"] .check { opacity: 1; }
+
+  /* Dropdown / popover entrance: slide up from below + fade in */
+  @keyframes dropIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .month-select-menu:not([hidden]),
+  .proj-select-menu:not([hidden]),
+  .info-pop:not([hidden]) {
+    animation: dropIn 0.16s ease;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .month-select-menu:not([hidden]),
+    .proj-select-menu:not([hidden]),
+    .info-pop:not([hidden]) { animation: none; }
+  }
   .totals {
     color: var(--text-dim);
     font-size: 13px;
@@ -978,7 +996,6 @@
       </div>
     </div>
     <aside class="stats-card" id="statsCard">
-      <h3 id="statsTitle">—</h3>
       <div id="statsBody"></div>
     </aside>
   </div>
@@ -1359,10 +1376,8 @@ function syncCellSize() {
 
 function renderStats() {
   let m = getView().months[currentMonth];
-  const title = document.getElementById("statsTitle");
   const body = document.getElementById("statsBody");
   const [y, mm] = currentMonth.split("-").map(Number);
-  title.textContent = `${MONTH_NAMES[mm-1]} ${y}`;
 
   // No data for this source/month: fall back to an empty month object so the
   // full KPI/chart structure still renders (with zeros), keeping the
