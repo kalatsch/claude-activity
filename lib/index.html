@@ -648,7 +648,7 @@
   table.heatmap td.leaving, table.heatmap th.leaving { animation: cellLeave 0.18s ease forwards; }
   /* "By hour of day": old bars collapse to zero, THEN the new ones grow back */
   @keyframes barCollapse { from { transform: scaleY(1); } to { transform: scaleY(0); } }
-  .chart-ghost .bar { transform-origin: bottom; animation: barCollapse 0.2s ease forwards; }
+  .chart-ghost .bar { transform-origin: bottom; animation: barCollapse 0.16s ease forwards; }
   .totals {
     color: var(--text-dim);
     font-size: 13px;
@@ -1342,10 +1342,16 @@ function neighborMonth(direction) {
 }
 
 let chartGhost = null;
-const CHART_COLLAPSE_MS = 200;
-// Collapse the previous "By hour of day" bars to zero in an overlay ghost.
-// Returns how long the collapse takes so the new bars can wait it out (the
-// line fully drops to zero before it grows back — no overlap). 0 = no anim.
+// Whole "By hour of day" transition (collapse to zero, then grow back) must fit
+// the same total time as the heatmap tiles (~490ms). Split sequentially.
+const CHART_TOTAL = 488;
+const CHART_COLLAPSE = 200;                       // phase 1: line drops to zero
+const CHART_GROW = CHART_TOTAL - CHART_COLLAPSE;   // phase 2: line grows back
+const CC_DUR = 130, CC_STEP = (CHART_COLLAPSE - CC_DUR) / 23;  // per-bar collapse
+const GR_DUR = 170, GR_STEP = (CHART_GROW - GR_DUR) / 23;      // per-bar growth
+// Collapse the previous hour bars to zero in an overlay ghost, one by one
+// left→right (the order they grow). Returns the collapse-phase length so the
+// new bars wait it out — the line fully reaches zero before regrowing. 0 = none.
 function collapseChartOut(oldHtml) {
   const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   if (chartGhost) { chartGhost.remove(); chartGhost = null; }
@@ -1362,19 +1368,22 @@ function collapseChartOut(oldHtml) {
   ghost.innerHTML = oldHtml;
   card.appendChild(ghost);
   chartGhost = ghost;
-  ghost.querySelectorAll(".bar").forEach(bar => { bar.style.animationDelay = "0ms"; }); // drop together
-  setTimeout(() => { if (chartGhost === ghost) chartGhost = null; ghost.remove(); }, CHART_COLLAPSE_MS + 60);
-  return CHART_COLLAPSE_MS;
+  ghost.querySelectorAll(".bar").forEach((bar, i) => {
+    bar.style.animationDelay = (i * CC_STEP).toFixed(1) + "ms";
+    bar.style.animationDuration = CC_DUR + "ms";
+  });
+  setTimeout(() => { if (chartGhost === ghost) chartGhost = null; ghost.remove(); }, CHART_COLLAPSE + 40);
+  return CHART_COLLAPSE;
 }
 function renderStatsAnimated() {
   const old = document.querySelector("#statsBody .chart-hours");
   const oldHtml = old ? old.outerHTML : null;
   renderStats();
   const wait = collapseChartOut(oldHtml);
-  if (wait) {  // hold the new hour bars at zero until the old line has collapsed
-    document.querySelectorAll("#statsBody .chart-hours .bar").forEach(bar => {
-      const base = parseFloat(bar.style.animationDelay) || 0;
-      bar.style.animationDelay = (wait + base) + "ms";
+  if (wait) {  // grow phase: held at zero through the collapse, then a quick wave back
+    document.querySelectorAll("#statsBody .chart-hours .bar").forEach((bar, i) => {
+      bar.style.animationDelay = (wait + i * GR_STEP).toFixed(1) + "ms";
+      bar.style.animationDuration = GR_DUR + "ms";
     });
   }
 }
