@@ -646,6 +646,9 @@
   /* Exit wave: the old grid drains toward the bottom-right before the rebuild */
   @keyframes cellLeave { from { opacity: 1; transform: scale(1); } to { opacity: 0; transform: scale(0.4); } }
   table.heatmap td.leaving, table.heatmap th.leaving { animation: cellLeave 0.18s ease forwards; }
+  /* "By hour of day": old bars fly out to the right before the new ones grow in */
+  @keyframes barFlyRight { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(30px); } }
+  .chart-ghost .bar { animation: barFlyRight 0.32s cubic-bezier(.4,0,.6,1) forwards; }
   .totals {
     color: var(--text-dim);
     font-size: 13px;
@@ -1216,7 +1219,7 @@ function setProject(p) {
   currentProject = p || "";
   try { localStorage.setItem(STORAGE_PROJECT_KEY, currentProject); } catch (e) {}
   updateProjectTrigger();
-  renderStats();
+  renderStatsAnimated();
   transitionGrid(() => renderGrid());
 }
 
@@ -1338,6 +1341,35 @@ function neighborMonth(direction) {
   return later.length ? later[0] : null;
 }
 
+let chartGhost = null;
+// Snapshot the previous "By hour of day" bars into an overlay that flies out to
+// the right while the rebuilt chart grows back in underneath.
+function flyChartOut(oldHtml) {
+  const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (chartGhost) { chartGhost.remove(); chartGhost = null; }
+  const chart = document.querySelector("#statsBody .chart-hours");
+  const card = document.getElementById("statsCard");
+  if (!oldHtml || !chart || !card || reduce) return;
+  if (getComputedStyle(card).position === "static") card.style.position = "relative";
+  const cr = chart.getBoundingClientRect(), kr = card.getBoundingClientRect();
+  const ghost = document.createElement("div");
+  ghost.className = "chart-ghost";
+  ghost.style.cssText =
+    `position:absolute;left:${cr.left - kr.left}px;top:${cr.top - kr.top}px;` +
+    `width:${cr.width}px;height:${cr.height}px;pointer-events:none;z-index:5`;
+  ghost.innerHTML = oldHtml;
+  card.appendChild(ghost);
+  chartGhost = ghost;
+  ghost.querySelectorAll(".bar").forEach((bar, i) => { bar.style.animationDelay = (i * 6) + "ms"; });
+  setTimeout(() => { if (chartGhost === ghost) chartGhost = null; ghost.remove(); }, 24 * 6 + 360);
+}
+function renderStatsAnimated() {
+  const old = document.querySelector("#statsBody .chart-hours");
+  const oldHtml = old ? old.outerHTML : null;
+  renderStats();
+  flyChartOut(oldHtml);
+}
+
 let gridTimer = null, gridGhost = null;
 // Overlapping transition: snapshot the current grid into an overlay "ghost"
 // that drains out (wave toward bottom-right) while the real grid is rebuilt
@@ -1390,7 +1422,7 @@ function setMonth(m) {
   document.getElementById("next").disabled = !neighborMonth(+1);
 
   updateToggleLabels();
-  renderStats();
+  renderStatsAnimated();
   transitionGrid(() => { renderGrid(); syncCellSize(); });
 }
 
