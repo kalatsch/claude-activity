@@ -649,6 +649,9 @@
   /* "By hour of day": old bars collapse to zero, THEN the new ones grow back */
   @keyframes barCollapse { from { transform: scaleY(1); } to { transform: scaleY(0); } }
   .chart-ghost .bar { transform-origin: bottom; animation: barCollapse 0.16s ease forwards; }
+  /* "By day of week": old bars fly out to the right, THEN the new ones grow in */
+  @keyframes barFlyOut { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(30px); } }
+  .dow-ghost .row .dow-bar { animation: barFlyOut 0.14s ease forwards; }
   .totals {
     color: var(--text-dim);
     font-size: 13px;
@@ -1375,15 +1378,54 @@ function collapseChartOut(oldHtml) {
   setTimeout(() => { if (chartGhost === ghost) chartGhost = null; ghost.remove(); }, CHART_COLLAPSE + 40);
   return CHART_COLLAPSE;
 }
+// "By day of week": same total budget, sequential — old rows fly out to the
+// right, then the new ones grow back in from the left. 7 rows.
+let dowGhost = null;
+const DOW_FLY = 200;
+const DOW_FLY_DUR = 140, DOW_FLY_STEP = (DOW_FLY - DOW_FLY_DUR) / 6;        // per-row fly-out
+const DOW_GROW = CHART_TOTAL - DOW_FLY;
+const DOW_GR_DUR = 180, DOW_GR_STEP = (DOW_GROW - DOW_GR_DUR) / 6;          // per-row growth
+function flyDowOut(oldHtml) {
+  const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (dowGhost) { dowGhost.remove(); dowGhost = null; }
+  const chart = document.querySelector("#statsBody .chart-dow");
+  const card = document.getElementById("statsCard");
+  if (!oldHtml || !chart || !card || reduce) return 0;
+  if (getComputedStyle(card).position === "static") card.style.position = "relative";
+  const cr = chart.getBoundingClientRect(), kr = card.getBoundingClientRect();
+  const ghost = document.createElement("div");
+  ghost.className = "dow-ghost";
+  ghost.style.cssText =
+    `position:absolute;left:${cr.left - kr.left}px;top:${cr.top - kr.top}px;` +
+    `width:${cr.width}px;height:${cr.height}px;pointer-events:none;z-index:5`;
+  ghost.innerHTML = oldHtml;
+  card.appendChild(ghost);
+  dowGhost = ghost;
+  ghost.querySelectorAll(".dow-bar").forEach((bar, i) => {
+    bar.style.animationDelay = (i * DOW_FLY_STEP).toFixed(1) + "ms";
+    bar.style.animationDuration = DOW_FLY_DUR + "ms";
+  });
+  setTimeout(() => { if (dowGhost === ghost) dowGhost = null; ghost.remove(); }, DOW_FLY + 40);
+  return DOW_FLY;
+}
 function renderStatsAnimated() {
-  const old = document.querySelector("#statsBody .chart-hours");
-  const oldHtml = old ? old.outerHTML : null;
+  const oldHour = document.querySelector("#statsBody .chart-hours");
+  const oldHourHtml = oldHour ? oldHour.outerHTML : null;
+  const oldDow = document.querySelector("#statsBody .chart-dow");
+  const oldDowHtml = oldDow ? oldDow.outerHTML : null;
   renderStats();
-  const wait = collapseChartOut(oldHtml);
-  if (wait) {  // grow phase: held at zero through the collapse, then a quick wave back
+  const wait = collapseChartOut(oldHourHtml);
+  if (wait) {  // hour bars: held at zero through the collapse, then a quick wave back
     document.querySelectorAll("#statsBody .chart-hours .bar").forEach((bar, i) => {
       bar.style.animationDelay = (wait + i * GR_STEP).toFixed(1) + "ms";
       bar.style.animationDuration = GR_DUR + "ms";
+    });
+  }
+  const dWait = flyDowOut(oldDowHtml);
+  if (dWait) {  // dow bars: held until the old rows have flown out, then grow in
+    document.querySelectorAll("#statsBody .chart-dow .dow-bar").forEach((bar, i) => {
+      bar.style.animationDelay = (dWait + i * DOW_GR_STEP).toFixed(1) + "ms";
+      bar.style.animationDuration = DOW_GR_DUR + "ms";
     });
   }
 }
