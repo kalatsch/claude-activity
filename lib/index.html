@@ -626,6 +626,20 @@
     .proj-select-menu.closing,
     .info-pop.closing { animation: none; }
   }
+
+  /* Date / filter change: wave the heatmap in + grow the sidebar charts.
+     fill-mode: backwards keeps the start frame during the per-element delay
+     but reverts to the base value after, so :hover transforms still work. */
+  @keyframes cellWave { from { opacity: 0; transform: scale(0.4); } to { opacity: 1; transform: scale(1); } }
+  table.heatmap td.cell, table.heatmap td.total-cell { animation: cellWave 0.25s ease backwards; }
+  @keyframes barRise { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+  .chart-hours .bar { transform-origin: bottom; animation: barRise 0.42s cubic-bezier(.2,.7,.3,1) backwards; }
+  @keyframes barSlide { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+  .chart-dow .row .dow-bar { transform-origin: left center; animation: barSlide 0.45s cubic-bezier(.2,.7,.3,1) backwards; }
+  @media (prefers-reduced-motion: reduce) {
+    table.heatmap td.cell, table.heatmap td.total-cell,
+    .chart-hours .bar, .chart-dow .row .dow-bar { animation: none; }
+  }
   .totals {
     color: var(--text-dim);
     font-size: 13px;
@@ -1475,7 +1489,7 @@ function renderStats() {
     const isOff = !isWorkHour(h);
     const cls = isOff ? "bar off" : "bar";
     const tip = `${String(h).padStart(2,"0")}:00 — ${formatDurationPlain(sec)}`;
-    return `<div class="${cls}" style="height:${pctH.toFixed(1)}%" title="${tip}"></div>`;
+    return `<div class="${cls}" style="height:${pctH.toFixed(1)}%;animation-delay:${h * 12}ms" title="${tip}"></div>`;
   }).join("");
   const hourAxis = Array.from({length: 24}, (_, i) => `<span>${String(i).padStart(2,"0")}</span>`).join("");
 
@@ -1483,13 +1497,13 @@ function renderStats() {
   const dowNames = ["MO","TU","WE","TH","FR","SA","SU"];
   const maxDow = Math.max(1, ...byDow);
   const displayOrder = Array.from({length: 7}, (_, k) => (FIRST_DAY_OF_WEEK + k) % 7);
-  const dowRows = displayOrder.map(i => {
+  const dowRows = displayOrder.map((i, idx) => {
     const sec = byDow[i];
     const wPct = (sec / maxDow) * 100;
     const isWknd = !WORK_DAYS.has(i);
     return `<div class="row ${isWknd ? "wknd" : ""}">
       <span class="dow-label">${dowNames[i]}</span>
-      <span class="dow-bar" style="width:${wPct.toFixed(1)}%"></span>
+      <span class="dow-bar" style="width:${wPct.toFixed(1)}%;animation-delay:${idx * 40}ms"></span>
       <span class="dow-val">${formatDuration(sec)}</span>
     </div>`;
   }).join("");
@@ -1509,8 +1523,10 @@ function renderStats() {
       if (d.proj_cost) totalCost += d.proj_cost[currentProject] || 0;
     }
   }
-  const tokensVal = haveProjTokens ? formatTokens(totalTokens) : "—";
-  const costVal = haveProjTokens ? formatMoney(totalCost) : "—";
+  // Wrap a number so it counts up from 0 on render (see runCountUps).
+  const countSpan = (n, fmt, html) => `<span class="kc" data-count="${n}" data-fmt="${fmt}">${html}</span>`;
+  const tokensVal = haveProjTokens ? countSpan(totalTokens, "tok", formatTokens(totalTokens)) : "—";
+  const costVal = haveProjTokens ? countSpan(totalCost, "money", formatMoney(totalCost)) : "—";
   const tokensNote = haveProjTokens
     ? "input + output + cache‑create + 0.1 × cache‑read"
     : "per-project tokens not tracked for this month";
@@ -1527,9 +1543,9 @@ function renderStats() {
   body.innerHTML =
     `<div class="group">
        <div class="kpi-stack">
-         ${kpi("Total", formatDuration(total))}
-         ${kpi("Work hours", formatDuration(work), pct(work))}
-         ${kpi("Off hours", formatDuration(nonWork), pct(nonWork))}
+         ${kpi("Total", countSpan(total, "dur", formatDuration(total)))}
+         ${kpi("Work hours", countSpan(work, "dur", formatDuration(work)), pct(work))}
+         ${kpi("Off hours", countSpan(nonWork, "dur", formatDuration(nonWork)), pct(nonWork))}
        </div>
      </div>
      <div class="group">
@@ -1554,6 +1570,30 @@ function renderStats() {
        ${row("total", "≈ API cost", costVal)}
        ${costNote ? `<div class="row sub"><span class="label">${costNote}</span><span class="value"></span></div>` : ""}
      </div>`;
+  runCountUps();
+}
+
+// Count the KPI / token / cost numbers up from 0 on each render.
+function runCountUps() {
+  const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  document.querySelectorAll("#statsBody .kc[data-count]").forEach(el => {
+    const to = parseFloat(el.dataset.count) || 0;
+    const fmt = el.dataset.fmt;
+    const render = (v) => {
+      if (fmt === "dur") el.innerHTML = formatDuration(v);
+      else if (fmt === "tok") el.textContent = formatTokens(v);
+      else el.textContent = formatMoney(v);
+    };
+    if (reduce || to <= 0) { render(to); return; }
+    const dur = 460, t0 = performance.now();
+    const tick = (now) => {
+      const p = Math.min(1, (now - t0) / dur);
+      const e = 1 - Math.pow(1 - p, 3);   // easeOutCubic
+      render(to * e);
+      if (p < 1) requestAnimationFrame(tick); else render(to);
+    };
+    requestAnimationFrame(tick);
+  });
 }
 
 function renderGrid() {
@@ -1594,7 +1634,8 @@ function renderGrid() {
       if (kind === "wknd") cls.push("wknd");
       else if (kind === "off") cls.push("off");
       if (isCurrentMonth && d === todayD) cls.push("today-col");
-      html += `<td class="${cls.join(" ")}" data-d="${d}" data-h="${h}" data-s="${sec}"></td>`;
+      const wave = (d - 1) * 6 + h * 2.5;  // left→right wave, slight top-down tilt
+      html += `<td class="${cls.join(" ")}" data-d="${d}" data-h="${h}" data-s="${sec}" style="animation-delay:${wave.toFixed(0)}ms"></td>`;
     }
     html += '</tr>';
   }
@@ -1615,7 +1656,7 @@ function renderGrid() {
     const bg = total > 0
       ? `background: rgba(255,255,255,${opacity})`
       : "";
-    html += `<td class="total-cell${todayCls(d)}" data-d="${d}" data-s="${total}" style="${bg}"></td>`;
+    html += `<td class="total-cell${todayCls(d)}" data-d="${d}" data-s="${total}" style="${bg};animation-delay:${((d - 1) * 6 + 70).toFixed(0)}ms"></td>`;
   }
   html += `</tr>`;
 
