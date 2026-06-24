@@ -303,14 +303,15 @@
   .title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .info { position: relative; flex: none; }
   .info-btn {
-    display: inline-flex; align-items: center; justify-content: center;
-    width: 30px; height: 30px; border-radius: 8px;
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 30px; padding: 0 11px; border-radius: 8px;
     background: var(--panel); border: 1px solid var(--border);
-    color: var(--text-dim); cursor: pointer; padding: 0;
+    color: var(--text-dim); cursor: pointer;
+    font: inherit; font-size: 12px; font-weight: 500;
     transition: background 0.12s, color 0.12s, border-color 0.12s;
   }
   .info-btn:hover, .info-btn[aria-expanded="true"] { background: var(--panel-2); color: var(--text); border-color: var(--text-faint); }
-  .info-btn svg { width: 17px; height: 17px; }
+  .info-btn svg { width: 15px; height: 15px; flex: none; }
   .info-pop {
     position: absolute; top: calc(100% + 8px); right: 0;
     width: 360px; max-width: 86vw; max-height: calc(100vh - 90px); overflow-y: auto;
@@ -935,6 +936,7 @@
     <div class="info" id="infoWrap">
       <button class="info-btn" id="infoBtn" type="button" aria-label="About &amp; settings" aria-expanded="false" title="About &amp; settings">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><line x1="12" y1="11" x2="12" y2="16"></line><circle cx="12" cy="7.6" r="0.7" fill="currentColor" stroke="none"></circle></svg>
+        <span>About &amp; settings</span>
       </button>
       <div class="info-pop" id="infoPop" role="dialog" aria-label="About this dashboard" hidden>
         <h3>What this shows</h3>
