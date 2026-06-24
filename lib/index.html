@@ -403,6 +403,16 @@
     white-space: nowrap;
   }
   .proj-select.has-project .proj-select-value { color: var(--text); }
+  .proj-select-clear {
+    visibility: hidden;      /* reserve the slot so trigger width never shifts */
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 16px; height: 16px; border-radius: 4px;
+    color: var(--text-dim); flex: none; cursor: pointer; margin: -2px 0;
+    transition: background 0.1s, color 0.1s;
+  }
+  .proj-select.has-project .proj-select-clear { visibility: visible; }
+  .proj-select-clear:hover { background: var(--panel-2); color: var(--text); }
+  .proj-select-clear svg { width: 11px; height: 11px; }
   .proj-select-chevron { color: var(--text-dim); transition: transform 0.15s; flex: none; }
   .proj-select-trigger[aria-expanded="true"] .proj-select-chevron { transform: rotate(180deg); color: var(--text); }
   .proj-select-menu {
@@ -858,6 +868,9 @@
     <div class="proj-select" id="projectSelectWrap">
       <button class="proj-select-trigger" id="projectSelectTrigger" type="button" aria-haspopup="listbox" aria-expanded="false" title="Filter by project">
         <span class="proj-select-value" id="projectSelectValue">All projects</span>
+        <span class="proj-select-clear" id="projectSelectClear" role="button" aria-label="Clear project filter" title="Clear filter">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"></line><line x1="18" y1="6" x2="6" y2="18"></line></svg>
+        </span>
         <svg class="proj-select-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
       </button>
       <div class="proj-select-menu" id="projectSelectMenu" role="listbox" hidden></div>
@@ -1239,6 +1252,12 @@ function initSourceToggle() {
   });
   document.querySelectorAll("#sourceToggle button").forEach(b => {
     b.addEventListener("click", () => setSource(b.dataset.source));
+  });
+  const pclear = document.getElementById("projectSelectClear");
+  if (pclear) pclear.addEventListener("click", (e) => {
+    e.stopPropagation();          // don't toggle the menu
+    setProject("");
+    closeProjectSelect();
   });
   const ptrig = document.getElementById("projectSelectTrigger");
   if (ptrig) {
