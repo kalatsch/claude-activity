@@ -273,6 +273,22 @@ def project_name_from_cwd(cwd):
     return p.name or cwd
 
 
+def cwd_sublabel(cwd):
+    """Leaf subfolder name when cwd is *inside* a git repo (below its root) —
+    used as a human-label fallback so sessions rolled up to the repo aren't all
+    'no title'. Empty when cwd is the repo root or not inside a repo."""
+    if not cwd:
+        return ""
+    p = Path(cwd)
+    for anc in (p, *p.parents):
+        try:
+            if (anc / ".git").exists():
+                return "" if anc == p else p.name
+        except OSError:
+            break
+    return ""
+
+
 def extract_tokens(obj):
     if obj.get("type") != "assistant":
         return None
@@ -305,6 +321,7 @@ def collect_claude():
         try:
             with open(jp) as f:
                 file_sid = file_proj = file_title = file_last = None
+                file_cwd = file_branch = None
                 lines = f.readlines()
 
                 for line in lines:
@@ -320,6 +337,10 @@ def collect_claude():
                     cwd = obj.get("cwd")
                     if cwd and not file_proj:
                         file_proj = project_name_from_cwd(cwd)
+                        file_cwd = cwd
+                    br = obj.get("gitBranch")
+                    if isinstance(br, str) and br.strip():
+                        file_branch = br.strip()
                     if obj.get("type") == "ai-title":
                         t = obj.get("aiTitle")
                         if isinstance(t, str) and t.strip():
@@ -330,14 +351,25 @@ def collect_claude():
                             file_last = lp.strip()
 
                 if file_sid:
-                    title = file_title or file_last or ""
+                    # Fallback chain so rolled-up sessions still read sensibly:
+                    # AI title → last prompt → git branch → repo subfolder.
+                    sub = cwd_sublabel(file_cwd)
+                    title = file_title or file_last or file_branch or sub or ""
                     if len(title) > 80:
                         title = title[:77] + "…"
-                    session_meta[file_sid] = {
-                        "project": file_proj or "unknown",
-                        "title": title,
-                        "source": "claude",
-                    }
+                    rank = (4 if file_title else 3 if file_last
+                            else 2 if file_branch else 1 if sub else 0)
+                    # Subagent files share the parent's sessionId and carry no
+                    # title — keep the richest entry instead of letting an empty
+                    # one clobber it.
+                    prev = session_meta.get(file_sid)
+                    if prev is None or rank > prev.get("_rank", -1):
+                        session_meta[file_sid] = {
+                            "project": file_proj or "unknown",
+                            "title": title,
+                            "source": "claude",
+                            "_rank": rank,
+                        }
 
                 for line in lines:
                     try:
@@ -415,6 +447,7 @@ def collect_codex():
         file_proj = "unknown"
         file_title = ""
         file_model = None
+        file_cwd = None
 
         for line in lines:
             try:
@@ -430,6 +463,7 @@ def collect_codex():
                 cwd = payload.get("cwd")
                 if cwd:
                     file_proj = project_name_from_cwd(cwd)
+                    file_cwd = cwd
             elif t == "turn_context":
                 mdl = payload.get("model") or obj.get("model")
                 if mdl:
@@ -444,7 +478,7 @@ def collect_codex():
         if file_sid:
             session_meta[file_sid] = {
                 "project": file_proj,
-                "title": file_title,
+                "title": file_title or cwd_sublabel(file_cwd),
                 "source": "codex",
             }
 
