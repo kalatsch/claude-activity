@@ -1336,26 +1336,44 @@ function neighborMonth(direction) {
   return later.length ? later[0] : null;
 }
 
-let gridTimer = null;
-// Drain the current grid out (wave toward bottom-right), then run `rebuild`,
-// which paints the new grid (it waves back in from the top-left). No old grid
-// or reduced-motion → rebuild immediately.
+let gridTimer = null, gridGhost = null;
+// Overlapping transition: snapshot the current grid into an overlay "ghost"
+// that drains out (wave toward bottom-right) while the real grid is rebuilt
+// immediately underneath and waves back in from the top-left — the two waves
+// run at the same time. No old grid or reduced-motion → rebuild instantly.
 function transitionGrid(rebuild) {
   const grid = document.getElementById("grid");
-  const cells = grid ? grid.querySelectorAll("td.cell, td.total-cell") : [];
   const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   if (gridTimer) { clearTimeout(gridTimer); gridTimer = null; }
-  if (!cells.length || reduce) { rebuild(); return; }
+  if (gridGhost) { gridGhost.remove(); gridGhost = null; }
+  if (!grid || !grid.querySelector("td.cell") || reduce) { rebuild(); return; }
+
+  const card = grid.parentElement;
+  if (getComputedStyle(card).position === "static") card.style.position = "relative";
+  const ghost = document.createElement("div");
+  ghost.className = "grid-ghost";
+  ghost.style.cssText =
+    `position:absolute;left:${grid.offsetLeft}px;top:${grid.offsetTop}px;` +
+    `width:${grid.offsetWidth}px;pointer-events:none;z-index:5`;
+  ghost.innerHTML = grid.innerHTML;
+  card.appendChild(ghost);
+  gridGhost = ghost;
+
   let maxDelay = 0;
-  cells.forEach(td => {
+  ghost.querySelectorAll("td.cell, td.total-cell").forEach(td => {
     const d = +td.dataset.d || 1;
     const h = (td.dataset.h !== undefined && td.dataset.h !== "") ? +td.dataset.h : 24;
-    const delay = (d - 1) * 4 + h * 4;   // sweep top-left → bottom-right
+    const delay = (d - 1) * 4 + h * 4;   // drain sweeps top-left → bottom-right
     td.style.animationDelay = delay + "ms";
     td.classList.add("leaving");
     if (delay > maxDelay) maxDelay = delay;
   });
-  gridTimer = setTimeout(() => { gridTimer = null; rebuild(); }, maxDelay + 180);
+
+  rebuild();   // new grid builds now, under the ghost → entrance overlaps the exit
+  gridTimer = setTimeout(() => {
+    if (gridGhost === ghost) gridGhost = null;
+    ghost.remove(); gridTimer = null;
+  }, maxDelay + 240);
 }
 
 function setMonth(m) {
