@@ -70,7 +70,7 @@
     flex: 0 0 auto;
     width: var(--max-table-w, auto);
     display: flex;
-    justify-content: flex-start;
+    justify-content: flex-end;
     align-items: stretch;
   }
   .main .grid-card { flex: 0 0 auto; }
@@ -1356,7 +1356,8 @@ function transitionGrid(rebuild) {
   ghost.className = "grid-ghost";
   ghost.style.cssText =
     `position:absolute;left:${grid.offsetLeft}px;top:${grid.offsetTop}px;` +
-    `width:${grid.offsetWidth}px;pointer-events:none;z-index:5`;
+    `width:${grid.offsetWidth}px;pointer-events:none;z-index:5;` +
+    `display:flex;justify-content:flex-end;align-items:stretch`;
   ghost.innerHTML = grid.innerHTML;
   card.appendChild(ghost);
   gridGhost = ghost;
