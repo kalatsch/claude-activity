@@ -403,7 +403,9 @@
     font-size: 12px;
     font-weight: 500;
     cursor: pointer;
-    max-width: 240px;
+    width: 150px;          /* fixed: the control stays put regardless of selection */
+    white-space: nowrap;
+    overflow: hidden;
     text-overflow: ellipsis;
   }
   .project-filter select:focus { outline: none; }
