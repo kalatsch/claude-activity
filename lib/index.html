@@ -70,7 +70,7 @@
     flex: 0 0 auto;
     width: var(--max-table-w, auto);
     display: flex;
-    justify-content: flex-end;
+    justify-content: flex-start;
     align-items: stretch;
   }
   .main .grid-card { flex: 0 0 auto; }
@@ -632,18 +632,20 @@
      fill-mode: backwards keeps the start frame during the per-element delay
      but reverts to the base value after, so :hover transforms still work. */
   @keyframes cellWave { from { opacity: 0; transform: scale(0.4); } to { opacity: 1; transform: scale(1); } }
-  table.heatmap td.cell, table.heatmap td.total-cell { animation: cellWave 0.25s ease backwards; }
+  table.heatmap td.cell, table.heatmap td.total-cell,
+  table.heatmap th.day-head, table.heatmap th.row-label { animation: cellWave 0.25s ease backwards; }
   @keyframes barRise { from { transform: scaleY(0); } to { transform: scaleY(1); } }
   .chart-hours .bar { transform-origin: bottom; animation: barRise 0.42s cubic-bezier(.2,.7,.3,1) backwards; }
   @keyframes barSlide { from { transform: scaleX(0); } to { transform: scaleX(1); } }
   .chart-dow .row .dow-bar { transform-origin: left center; animation: barSlide 0.45s cubic-bezier(.2,.7,.3,1) backwards; }
   @media (prefers-reduced-motion: reduce) {
     table.heatmap td.cell, table.heatmap td.total-cell,
+    table.heatmap th.day-head, table.heatmap th.row-label, table.heatmap .leaving,
     .chart-hours .bar, .chart-dow .row .dow-bar { animation: none; }
   }
   /* Exit wave: the old grid drains toward the bottom-right before the rebuild */
   @keyframes cellLeave { from { opacity: 1; transform: scale(1); } to { opacity: 0; transform: scale(0.4); } }
-  table.heatmap td.cell.leaving, table.heatmap td.total-cell.leaving { animation: cellLeave 0.18s ease forwards; }
+  table.heatmap td.leaving, table.heatmap th.leaving { animation: cellLeave 0.18s ease forwards; }
   .totals {
     color: var(--text-dim);
     font-size: 13px;
@@ -1360,12 +1362,15 @@ function transitionGrid(rebuild) {
   gridGhost = ghost;
 
   let maxDelay = 0;
-  ghost.querySelectorAll("td.cell, td.total-cell").forEach(td => {
-    const d = +td.dataset.d || 1;
-    const h = (td.dataset.h !== undefined && td.dataset.h !== "") ? +td.dataset.h : 24;
+  ghost.querySelectorAll("td.cell, td.total-cell, th.day-head, th.row-label").forEach(el => {
+    const d = +el.dataset.d || 1;
+    let h;
+    if (el.dataset.h !== undefined && el.dataset.h !== "") h = +el.dataset.h;
+    else if (el.classList.contains("total-cell")) h = 24;  // bottom row leaves last
+    else h = 0;                                            // day-head / corner
     const delay = (d - 1) * 4 + h * 4;   // drain sweeps top-left → bottom-right
-    td.style.animationDelay = delay + "ms";
-    td.classList.add("leaving");
+    el.style.animationDelay = delay + "ms";
+    el.classList.add("leaving");
     if (delay > maxDelay) maxDelay = delay;
   });
 
@@ -1664,14 +1669,14 @@ function renderGrid() {
   for (let d = 1; d <= dn; d++) {
     const wd = monIdxOf(new Date(y, mm - 1, d).getDay());
     const cls = (WORK_DAYS.has(wd) ? "day-head" : "day-head col-weekend") + todayCls(d);
-    html += `<th class="${cls}" data-d="${d}">${String(d).padStart(2,"0")}</th>`;
+    html += `<th class="${cls}" data-d="${d}" style="animation-delay:${((d - 1) * 6).toFixed(0)}ms">${String(d).padStart(2,"0")}</th>`;
   }
   html += '</tr></thead><tbody>';
 
   for (let h = 0; h < 24; h++) {
     const isOffHourRow = !isWorkHour(h);
     const rowLabelCls = isOffHourRow ? "row-label row-offhour" : "row-label";
-    html += `<tr><th class="${rowLabelCls}">${String(h).padStart(2,"0")}h</th>`;
+    html += `<tr><th class="${rowLabelCls}" data-h="${h}" style="animation-delay:${(h * 2.5).toFixed(0)}ms">${String(h).padStart(2,"0")}h</th>`;
     for (let d = 1; d <= dn; d++) {
       const dkey = String(d).padStart(2, "0");
       const day = m && m.days[dkey];
