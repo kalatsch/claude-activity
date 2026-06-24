@@ -108,7 +108,7 @@
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
-  .stats-card .row.sub .label { padding-left: 12px; color: var(--text-dim); font-size: 12px; }
+  .stats-card .row.sub .label { padding-left: 12px; color: var(--text-dim); font-size: 12px; line-height: 1.45; text-wrap: balance; }
   .stats-card .row.sub .value { font-size: 12px; }
   .stats-card .row.total .label { font-weight: 500; color: var(--text); }
   .stats-card .row.total .value { font-weight: 600; font-size: 14px; }
@@ -1288,10 +1288,10 @@ function renderStats() {
   const costVal = projFiltered ? "—" : formatMoney(totalCost);
   const tokensNote = projFiltered
     ? "not split by project — pick “All projects” for token totals"
-    : "input + output + cache_create + cache_read × 0.1";
+    : "input + output + cache‑create + 0.1 × cache‑read";
   const costNote = projFiltered
     ? ""
-    : `if billed at ${currentSource === "codex" ? "OpenAI" : currentSource === "claude" ? "Anthropic" : "Anthropic + OpenAI"} API rates, per model`;
+    : "if billed at public API rates, per model";
 
   const kpi = (label, value, pctStr) => `
     <div class="kpi">
