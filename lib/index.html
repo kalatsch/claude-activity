@@ -372,45 +372,77 @@
     color: var(--accent);
   }
 
-  /* Project filter — native <select> styled to match the toggle chrome */
-  .project-filter {
-    position: relative;
+  /* Project filter — custom dropdown (mirrors the month picker). Trigger text
+     is tab-colored: grey for "All projects", white once a project is picked. */
+  .proj-select { position: relative; }
+  .proj-select-trigger {
     display: inline-flex;
     align-items: center;
-    height: 32px;
+    gap: 8px;
     background: var(--panel);
+    color: var(--text-dim);
     border: 1px solid var(--border);
     border-radius: 8px;
-    padding: 0 26px 0 11px;
-  }
-  .project-filter::after {
-    content: "";
-    position: absolute;
-    right: 11px;
-    width: 7px; height: 7px;
-    border-right: 2px solid var(--text-dim);
-    border-bottom: 2px solid var(--text-dim);
-    transform: translateY(-2px) rotate(45deg);
-    pointer-events: none;
-  }
-  .project-filter select {
-    appearance: none;
-    -webkit-appearance: none;
-    background: transparent;
-    border: 0;
-    color: var(--text-dim);
-    font: inherit;
+    padding: 6px 10px 6px 14px;
     font-size: 12px;
+    font-family: inherit;
     font-weight: 500;
     cursor: pointer;
-    width: 150px;          /* fixed: the control stays put regardless of selection */
-    white-space: nowrap;
+    outline: none;
+    line-height: 1;
+    height: 32px;
+    transition: background 0.12s, border-color 0.12s, color 0.12s;
+  }
+  .proj-select-trigger:hover { background: var(--panel-2); border-color: var(--text-faint); }
+  .proj-select-trigger[aria-expanded="true"] { border-color: var(--text-faint); }
+  .proj-select-value {
+    width: 150px;            /* fixed: control stays put regardless of selection */
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
   }
-  .project-filter select:focus { outline: none; }
-  .project-filter.active { box-shadow: inset 0 0 0 1px var(--border); }
-  .project-filter.active select { color: var(--accent); }
+  .proj-select.has-project .proj-select-value { color: var(--text); }
+  .proj-select-chevron { color: var(--text-dim); transition: transform 0.15s; flex: none; }
+  .proj-select-trigger[aria-expanded="true"] .proj-select-chevron { transform: rotate(180deg); color: var(--text); }
+  .proj-select-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    min-width: 190px;
+    max-height: 340px;
+    overflow-y: auto;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 6px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .proj-select-menu[hidden] { display: none; }
+  .proj-select-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    background: transparent;
+    color: var(--text-dim);
+    border: 0;
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+    text-align: left;
+    white-space: nowrap;
+    transition: background 0.08s, color 0.08s;
+  }
+  .proj-select-item:hover { background: var(--panel-2); color: var(--text); }
+  .proj-select-item[aria-selected="true"] { background: var(--panel-2); color: var(--text); font-weight: 600; }
+  .proj-select-item .check { width: 14px; height: 14px; flex: none; opacity: 0; color: var(--text); }
+  .proj-select-item[aria-selected="true"] .check { opacity: 1; }
 
   .header { flex-wrap: wrap; }
   .month-label {
@@ -822,10 +854,12 @@
         Codex <span class="src-h" data-src-h="codex">—</span>
       </button>
     </div>
-    <div class="project-filter" id="projectFilter" title="Filter by project">
-      <select id="projectSelect" aria-label="Filter by project">
-        <option value="">All projects</option>
-      </select>
+    <div class="proj-select" id="projectSelectWrap">
+      <button class="proj-select-trigger" id="projectSelectTrigger" type="button" aria-haspopup="listbox" aria-expanded="false" title="Filter by project">
+        <span class="proj-select-value" id="projectSelectValue">All projects</span>
+        <svg class="proj-select-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+      </button>
+      <div class="proj-select-menu" id="projectSelectMenu" role="listbox" hidden></div>
     </div>
   </div>
 
@@ -995,19 +1029,43 @@ function projectsInView() {
   return Array.from(set).sort((a, b) => a.localeCompare(b));
 }
 function rebuildProjectOptions() {
-  const sel = document.getElementById("projectSelect");
-  if (!sel) return;
+  const menu = document.getElementById("projectSelectMenu");
+  if (!menu) return;
   const projs = projectsInView();
   if (currentProject && !projs.includes(currentProject)) currentProject = "";
-  sel.innerHTML = '<option value="">All projects</option>' +
-    projs.map(p => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join("");
-  sel.value = currentProject;
-  document.getElementById("projectFilter").classList.toggle("active", !!currentProject);
+  const items = [["", "All projects"]].concat(projs.map(p => [p, p]));
+  menu.innerHTML = items.map(([val, label]) =>
+    `<button type="button" class="proj-select-item" role="option" data-value="${escapeHtml(val)}" aria-selected="${val === currentProject ? "true" : "false"}">` +
+      `<span>${escapeHtml(label)}</span>` +
+      `<svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>` +
+    `</button>`
+  ).join("");
+  menu.querySelectorAll(".proj-select-item").forEach(b =>
+    b.addEventListener("click", () => { setProject(b.dataset.value); closeProjectSelect(); }));
+  updateProjectTrigger();
+}
+function updateProjectTrigger() {
+  const wrap = document.getElementById("projectSelectWrap");
+  if (!wrap) return;
+  document.getElementById("projectSelectValue").textContent = currentProject || "All projects";
+  wrap.classList.toggle("has-project", !!currentProject);
+  document.querySelectorAll("#projectSelectMenu .proj-select-item").forEach(b =>
+    b.setAttribute("aria-selected", b.dataset.value === currentProject ? "true" : "false"));
+}
+function openProjectSelect() {
+  document.getElementById("projectSelectMenu").hidden = false;
+  document.getElementById("projectSelectTrigger").setAttribute("aria-expanded", "true");
+}
+function closeProjectSelect() {
+  const menu = document.getElementById("projectSelectMenu");
+  if (menu) menu.hidden = true;
+  const t = document.getElementById("projectSelectTrigger");
+  if (t) t.setAttribute("aria-expanded", "false");
 }
 function setProject(p) {
   currentProject = p || "";
   try { localStorage.setItem(STORAGE_PROJECT_KEY, currentProject); } catch (e) {}
-  document.getElementById("projectFilter").classList.toggle("active", !!currentProject);
+  updateProjectTrigger();
   renderGrid();
   renderStats();
 }
@@ -1181,8 +1239,19 @@ function initSourceToggle() {
   document.querySelectorAll("#sourceToggle button").forEach(b => {
     b.addEventListener("click", () => setSource(b.dataset.source));
   });
-  const psel = document.getElementById("projectSelect");
-  if (psel) psel.addEventListener("change", () => setProject(psel.value));
+  const ptrig = document.getElementById("projectSelectTrigger");
+  if (ptrig) {
+    ptrig.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (ptrig.getAttribute("aria-expanded") === "true") closeProjectSelect();
+      else openProjectSelect();
+    });
+    document.addEventListener("click", (e) => {
+      const w = document.getElementById("projectSelectWrap");
+      if (w && !w.contains(e.target)) closeProjectSelect();
+    });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeProjectSelect(); });
+  }
 }
 
 // Cell size is fixed (--cell-size from CSS, 24px) so neither viewport changes
