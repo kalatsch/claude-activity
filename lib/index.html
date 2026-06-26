@@ -959,10 +959,10 @@
           in Claude&nbsp;Code — your history is preserved across runs.</p>
         <h3>Settings</h3>
         <ul class="info-settings">
-          <li><b>gap_minutes</b><span class="def">10</span><br>longest pause still counted as continuous work.</li>
-          <li><b>work_intervals</b><span class="def">[[9, 18]]</span><br>working hours; inside = work (green), outside = off‑hours (yellow). Use two ranges to carve out lunch.</li>
-          <li><b>work_days</b><span class="def">[0–4]</span><br>work weekdays (0=Mon … 6=Sun); any day not listed renders as weekend (red).</li>
-          <li><b>first_day_of_week</b><span class="def">0</span><br>column order of the “by day of week” chart only (0=Mon, 6=Sun).</li>
+          <li><b>gap_minutes</b><span class="def" id="cfgGap">10</span><br>longest pause still counted as continuous work.</li>
+          <li><b>work_intervals</b><span class="def" id="cfgIntervals">[[9, 18]]</span><br>working hours; inside = work (green), outside = off‑hours (yellow). Use two ranges to carve out lunch.</li>
+          <li><b>work_days</b><span class="def" id="cfgDays">[0–4]</span><br>work weekdays (0=Mon … 6=Sun); any day not listed renders as weekend (red).</li>
+          <li><b>first_day_of_week</b><span class="def" id="cfgFdow">0</span><br>column order of the “by day of week” chart only (0=Mon, 6=Sun).</li>
         </ul>
         <p class="info-how">Edit <code>~/.claude-activity/config.json</code> and re-run
           <code>/activity</code>, or run <code>/activity --settings</code> for the setup wizard.</p>
@@ -2022,6 +2022,12 @@ if (!window.CLAUDE_ACTIVITY_DATA) {
   }
   if (Array.isArray(DATA.work_days)) WORK_DAYS = new Set(DATA.work_days);
   if (Number.isInteger(DATA.first_day_of_week)) FIRST_DAY_OF_WEEK = DATA.first_day_of_week;
+  // Reflect the actual baked-in config in the About popover instead of hardcoded defaults.
+  const setDef = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+  if (Number.isFinite(DATA.gap_limit_minutes)) setDef("cfgGap", DATA.gap_limit_minutes);
+  setDef("cfgIntervals", "[" + WORK_INTERVALS.map(iv => "[" + iv.join(", ") + "]").join(", ") + "]");
+  if (Array.isArray(DATA.work_days)) setDef("cfgDays", "[" + DATA.work_days.join(", ") + "]");
+  setDef("cfgFdow", FIRST_DAY_OF_WEEK);
   const legW = document.querySelector(".leg-work-label");
   if (legW) legW.textContent = `Work (Mon-Fri ${formatIntervals(WORK_INTERVALS)})`;
   // Pick initial source: stored preference → payload default → "both".
