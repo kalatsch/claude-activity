@@ -1402,6 +1402,9 @@ function flyDowOut(oldHtml) {
   ghost.innerHTML = oldHtml;
   card.appendChild(ghost);
   dowGhost = ghost;
+  // Hide the cloned values: only the bars fly out. Otherwise the old numbers sit
+  // static in the ghost and show through the new ones, which now count up from 0.
+  ghost.querySelectorAll(".dow-val").forEach(v => { v.style.opacity = "0"; });
   ghost.querySelectorAll(".dow-bar").forEach((bar, i) => {
     bar.style.animationDelay = (i * DOW_FLY_STEP).toFixed(1) + "ms";
     bar.style.animationDuration = DOW_FLY_DUR + "ms";
