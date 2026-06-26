@@ -1625,6 +1625,8 @@ function renderStats() {
       <span class="label">${label}</span>
       <span class="value">${pctStr ? `<span class="pct">${pctStr}</span> <span class="sep">/</span> ` : ""}${value}</span>
     </div>`;
+  // Wrap a number so it counts up from 0 on render (see runCountUps).
+  const countSpan = (n, fmt, html) => `<span class="kc" data-count="${n}" data-fmt="${fmt}">${html}</span>`;
 
   // Peak hour
   const peakH = byHour.indexOf(Math.max(...byHour));
@@ -1652,7 +1654,7 @@ function renderStats() {
     return `<div class="row ${isWknd ? "wknd" : ""}">
       <span class="dow-label">${dowNames[i]}</span>
       <span class="dow-bar" style="width:${wPct.toFixed(1)}%;animation-delay:${idx * 40}ms"></span>
-      <span class="dow-val">${formatDuration(sec)}</span>
+      <span class="dow-val">${countSpan(sec, "dur", formatDuration(sec))}</span>
     </div>`;
   }).join("");
 
@@ -1671,8 +1673,6 @@ function renderStats() {
       if (d.proj_cost) totalCost += d.proj_cost[currentProject] || 0;
     }
   }
-  // Wrap a number so it counts up from 0 on render (see runCountUps).
-  const countSpan = (n, fmt, html) => `<span class="kc" data-count="${n}" data-fmt="${fmt}">${html}</span>`;
   const tokensVal = haveProjTokens ? countSpan(totalTokens, "tok", formatTokens(totalTokens)) : "—";
   const costVal = haveProjTokens ? countSpan(totalCost, "money", formatMoney(totalCost)) : "—";
   const tokensNote = haveProjTokens
@@ -1697,10 +1697,10 @@ function renderStats() {
        </div>
      </div>
      <div class="group">
-       <div class="stats-subtitle">${activeDays} active days · avg ${formatDuration(avg)}</div>
-       ${row("sub", `Mon-Fri ${formatIntervals(WORK_INTERVALS)} (work)`, formatDuration(work))}
-       ${row("sub", "Mon-Fri off-hours", formatDuration(off), pct(off))}
-       ${row("sub", "Weekends", formatDuration(wknd), pct(wknd))}
+       <div class="stats-subtitle">${activeDays} active days · avg ${countSpan(avg, "dur", formatDuration(avg))}</div>
+       ${row("sub", `Mon-Fri ${formatIntervals(WORK_INTERVALS)} (work)`, countSpan(work, "dur", formatDuration(work)))}
+       ${row("sub", "Mon-Fri off-hours", countSpan(off, "dur", formatDuration(off)), pct(off))}
+       ${row("sub", "Weekends", countSpan(wknd, "dur", formatDuration(wknd)), pct(wknd))}
      </div>
      <div class="group">
        <h4>By hour of day</h4>
