@@ -646,21 +646,22 @@ def shape_output(hour_b, session_b, daily_tokens, daily_models, session_meta,
         months[f"{y:04d}-{m:02d}"][f"{d:02d}"]["hours"][str(h)] = round(sec)
 
     for (y, m, d, h), sid_map in session_b.items():
-        merged = {}
+        # Keep one item per session id. The `sid` is the stable merge key across
+        # runs — the title is NOT (it drifts as the last prompt / ai-title
+        # changes), so keying by title used to create duplicate items that
+        # inflated the per-project time filter. See merge_sessions.
+        items = []
         for sid, sec in sid_map.items():
             if sec < 1:
                 continue
             meta = session_meta.get(sid, {})
-            key = (
-                meta.get("project", "unknown"),
-                meta.get("title", ""),
-                meta.get("source", ""),
-            )
-            merged[key] = merged.get(key, 0) + sec
-        items = [
-            {"project": p, "title": t, "source": s, "sec": round(sec)}
-            for (p, t, s), sec in merged.items()
-        ]
+            items.append({
+                "sid": sid,
+                "project": meta.get("project", "unknown"),
+                "title": meta.get("title", ""),
+                "source": meta.get("source", ""),
+                "sec": round(sec),
+            })
         items.sort(key=lambda x: -x["sec"])
         if items:
             months[f"{y:04d}-{m:02d}"][f"{d:02d}"]["sessions"][str(h)] = items[:MAX_SESSIONS_PER_HOUR]
@@ -708,20 +709,34 @@ def merge_sessions(a, b):
     for hkey in set(a) | set(b):
         by_key = {}
         for item in (a.get(hkey) or []) + (b.get(hkey) or []):
-            # Legacy history items (pre-Codex schema) had no `source` field;
-            # back then we tracked only Claude, so default to that.
-            k = (
-                item.get("project", "unknown"),
-                item.get("title", ""),
-                item.get("source") or "claude",
-            )
-            by_key[k] = max(by_key.get(k, 0), int(item.get("sec", 0)))
-        merged = sorted(
-            [{"project": p, "title": t, "source": s, "sec": sec}
-             for (p, t, s), sec in by_key.items()],
-            key=lambda x: -x["sec"],
-        )[:MAX_SESSIONS_PER_HOUR]
-        out[hkey] = merged
+            sid = item.get("sid")
+            # Dedup by session id when present; older items (pre-sid schema) have
+            # no source field either, so fall back to (project, title, source).
+            key = ("sid", sid) if sid else (
+                "leg", item.get("project", "unknown"),
+                item.get("title", ""), item.get("source") or "claude")
+            sec = int(item.get("sec", 0))
+            cur = by_key.get(key)
+            if cur is None or sec > cur["sec"]:
+                by_key[key] = {
+                    "sid": sid,
+                    "project": item.get("project", "unknown"),
+                    "title": item.get("title", ""),
+                    "source": item.get("source") or "claude",
+                    "sec": sec,
+                }
+            else:
+                # same session, keep the richer (longer, non-empty) title
+                t = item.get("title", "")
+                if len(t) > len(cur.get("title", "")):
+                    cur["title"] = t
+        vals = list(by_key.values())
+        # A sid'd item supersedes any legacy (pre-sid) item for the same
+        # (project, source) in this hour: the legacy one is that same session's
+        # old title-keyed representation and would otherwise double-count.
+        sid_ps = {(v["project"], v["source"]) for v in vals if v.get("sid")}
+        vals = [v for v in vals if v.get("sid") or (v["project"], v["source"]) not in sid_ps]
+        out[hkey] = sorted(vals, key=lambda x: -x["sec"])[:MAX_SESSIONS_PER_HOUR]
     return out
 
 
@@ -951,6 +966,92 @@ def prune_stale_cache_versions():
         pass
 
 
+def _repair_hour_sessions(items, hour_total):
+    """Collapse duplicate session items within one hour. sid'd items dedup by
+    sid; legacy items (no sid) collapse by (project, source) keeping max sec —
+    this merges the title-variants of one session that used to inflate the
+    per-project time filter. Each item is clamped to the hour total, since no
+    single session can exceed the clock time of its own hour."""
+    sidk, legk = {}, {}
+    for it in items or []:
+        sec = int(it.get("sec", 0))
+        sid = it.get("sid")
+        title = it.get("title", "")
+        if sid:
+            cur = sidk.get(sid)
+            if cur is None or sec > cur["sec"]:
+                sidk[sid] = {"sid": sid, "project": it.get("project", "unknown"),
+                             "title": title, "source": it.get("source") or "claude", "sec": sec}
+            elif len(title) > len(cur["title"]):
+                cur["title"] = title
+        else:
+            k = (it.get("project", "unknown"), it.get("source") or "claude")
+            cur = legk.get(k)
+            if cur is None or sec > cur["sec"]:
+                legk[k] = {"sid": None, "project": k[0], "title": title, "source": k[1], "sec": sec}
+            elif len(title) > len(cur["title"]):
+                cur["title"] = title
+    # A sid'd item supersedes a legacy one for the same (project, source):
+    # they are the same session, so drop the legacy to avoid double-counting.
+    sid_ps = {(v["project"], v["source"]) for v in sidk.values()}
+    res = list(sidk.values()) + [v for k, v in legk.items() if k not in sid_ps]
+    if hour_total:
+        for it in res:
+            if it["sec"] > hour_total:
+                it["sec"] = hour_total
+    res.sort(key=lambda x: -x["sec"])
+    return res[:MAX_SESSIONS_PER_HOUR]
+
+
+def _prune_daily_backups(output_dir, keep=14):
+    """Keep only the newest N per-day history snapshots; delete older ones so
+    backups don't grow without bound (they're chronological by filename)."""
+    baks = sorted(output_dir.glob("history-*.bak.json"))
+    for p in baks[:-keep] if keep > 0 else baks:
+        try:
+            p.unlink()
+        except OSError:
+            pass
+
+
+def compact_history(output_dir):
+    """One-off maintenance (`--compact`): rebuild history.json from the
+    self-healed merge with duplicate session items collapsed, then move the old
+    top-level backups into a `pre-compact-<ts>/` folder so the self-healing
+    loader (non-recursive glob) can't resurrect the bloat from them."""
+    history_file = output_dir / "history.json"
+    by_source = _load_history_sources(history_file)   # self-heals across every backup
+    prices = _load_history_prices(history_file)
+    before = after = 0
+    for months in by_source.values():
+        for mval in months.values():
+            for day in mval.get("days", {}).values():
+                sessions = day.get("sessions") or {}
+                hours = day.get("hours") or {}
+                for hk, items in list(sessions.items()):
+                    before += len(items or [])
+                    rep = _repair_hour_sessions(items, int(hours.get(hk, 0)))
+                    after += len(rep)
+                    sessions[hk] = rep
+    sources_history = {s: {"months": by_source.get(s, {})} for s in SOURCES}
+    text = json.dumps({"updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                       "sources": sources_history, "prices": prices},
+                      ensure_ascii=False, indent=2)
+    stamp = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
+    archive = output_dir / ("pre-compact-" + stamp)
+    archive.mkdir(parents=True, exist_ok=True)
+    moved = 0
+    for p in sorted(output_dir.glob("history*.json*")):   # includes the old history.json (already loaded into memory)
+        try:
+            p.rename(archive / p.name); moved += 1
+        except OSError:
+            pass
+    history_file.write_text(text)
+    (output_dir / "history.json.bak").write_text(text)
+    (output_dir / ("history-" + datetime.now().astimezone().date().isoformat() + ".bak.json")).write_text(text)
+    print(f"  compacted sessions: {before:,} → {after:,} items · archived {moved} old backup(s) → {archive.name}")
+
+
 def main():
     prune_stale_cache_versions()
     cfg = load_config()
@@ -965,6 +1066,10 @@ def main():
     output_dir = Path(os.path.expanduser(cfg["output_dir"]))
     history_file = output_dir / "history.json"
     output_html = output_dir / "index.html"
+
+    if "--compact" in sys.argv:
+        print("Compacting history ...")
+        compact_history(output_dir)
 
     print("Reading JSONL logs ...")
     print(f"  Claude:  {PROJECTS_DIR}")
@@ -1025,6 +1130,7 @@ def main():
         today = datetime.now().astimezone().date().isoformat()
         (output_dir / f"history-{today}.bak.json").write_text(history_text)
         (output_dir / "history.json.bak").write_text(history_text)
+        _prune_daily_backups(output_dir)   # bounded retention (default: keep newest 14)
     except OSError:
         pass
 

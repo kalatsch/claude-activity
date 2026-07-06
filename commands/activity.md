@@ -1,7 +1,7 @@
 ---
 description: Generate and open a local heatmap of your Claude Code activity
 allowed-tools: Bash(python3 *), Bash(open *), Bash(xdg-open *), Bash(test *), Bash(echo *), Bash(cat *)
-argument-hint: "[--settings | --help | --no-open]"
+argument-hint: "[--settings | --compact | --help | --no-open]"
 ---
 
 # /activity
@@ -35,6 +35,8 @@ block below verbatim **and stop**. No other text.
 /activity --no-open        Generate but do not open the browser.
 /activity --settings       Re-run the setup wizard (work days, hours, gap…).
                             Aliases: --setup, --config, --reconfigure
+/activity --compact        One-off maintenance: rebuild history with duplicate
+                            session items collapsed and old backups archived.
 /activity --help           Show this help.
                             Aliases: -h, help
 
@@ -130,7 +132,8 @@ Silently run:
 python3 <path-to-generate.py>
 ```
 
-(Append ` --no-open` if the user passed `--no-open` on the command line.)
+(Append ` --no-open` if the user passed `--no-open`, and ` --compact` if the
+user passed `--compact`, on the command line.)
 The script writes `~/.claude-activity/index.html` and opens it in the
 browser when `auto_open` is true.
 

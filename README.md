@@ -63,6 +63,7 @@ Inside Claude Code:
 ```
 /activity              # generate + open in browser
 /activity --settings   # re-run the setup wizard (aliases: --setup, --config, --reconfigure)
+/activity --compact    # maintenance: collapse duplicate session items, archive old backups
 /activity --help       # show usage and all flags
 /activity --no-open    # generate without opening the browser
 ```
@@ -134,7 +135,13 @@ backing up the raw 500 MB+ of JSONL.
 load it merges (union/max) across `history.json` **and every backup**. So even
 if some outdated code overwrites `history.json` with fewer months, the next
 proper run rebuilds the full history — and the token price book — from the
-backups. Backups live in `output_dir`, never in the plugin cache.
+backups. Backups live in `output_dir`, never in the plugin cache, and only the
+newest 14 per-day snapshots are kept.
+
+Session activity is deduplicated by session id, so the per-project time filter
+can't be inflated by a session's title changing between runs. `/activity
+--compact` is a one-off cleanup that collapses any such legacy duplicates and
+archives the pre-compaction backups into `output_dir/pre-compact-<timestamp>/`.
 
 ## Comparison with `session-report` (Anthropic, official)
 
