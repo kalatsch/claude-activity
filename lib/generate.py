@@ -78,13 +78,18 @@ MAX_SESSIONS_PER_HOUR = 30
 PRICE_EFFECTIVE = "2026-01-01"   # effective date for the baseline snapshot
 PRICES = {
     "anthropic": {
-        #              input  output  cache_write(5m)  cache_read
-        "opus-4-8":   {"input": 5.0, "output": 25.0, "cache_write": 6.25, "cache_read": 0.50},
-        "opus-4-7":   {"input": 5.0, "output": 25.0, "cache_write": 6.25, "cache_read": 0.50},
-        "opus-4-6":   {"input": 5.0, "output": 25.0, "cache_write": 6.25, "cache_read": 0.50},
-        "sonnet-4-6": {"input": 3.0, "output": 15.0, "cache_write": 3.75, "cache_read": 0.30},
-        "sonnet-4-5": {"input": 3.0, "output": 15.0, "cache_write": 3.75, "cache_read": 0.30},
-        "haiku-4-5":  {"input": 1.0, "output": 5.0,  "cache_write": 1.25, "cache_read": 0.10},
+        #              input   output  cache_write(5m)  cache_read
+        "fable-5":    {"input": 10.0, "output": 50.0, "cache_write": 12.50, "cache_read": 1.00},
+        "mythos-5":   {"input": 10.0, "output": 50.0, "cache_write": 12.50, "cache_read": 1.00},
+        "opus-4-8":   {"input": 5.0,  "output": 25.0, "cache_write": 6.25, "cache_read": 0.50},
+        "opus-4-7":   {"input": 5.0,  "output": 25.0, "cache_write": 6.25, "cache_read": 0.50},
+        "opus-4-6":   {"input": 5.0,  "output": 25.0, "cache_write": 6.25, "cache_read": 0.50},
+        "opus-4-5":   {"input": 5.0,  "output": 25.0, "cache_write": 6.25, "cache_read": 0.50},
+        "sonnet-5":   {"input": 2.0,  "output": 10.0, "cache_write": 2.50, "cache_read": 0.20},  # intro pricing (through 2026-08-31)
+        "sonnet-4-6": {"input": 3.0,  "output": 15.0, "cache_write": 3.75, "cache_read": 0.30},
+        "sonnet-4-5": {"input": 3.0,  "output": 15.0, "cache_write": 3.75, "cache_read": 0.30},
+        "sonnet-4":   {"input": 3.0,  "output": 15.0, "cache_write": 3.75, "cache_read": 0.30},
+        "haiku-4-5":  {"input": 1.0,  "output": 5.0,  "cache_write": 1.25, "cache_read": 0.10},
     },
     "openai": {
         # Codex. No cache-creation counter; cached input maps to cache_read.
@@ -92,6 +97,10 @@ PRICES = {
         "gpt-5.5-pro": {"input": 30.0, "output": 180.0, "cache_write": 0.0, "cache_read": 0.0},
     },
 }
+
+# Models seen in logs that had no matching price (costed $0). Reported at the end
+# of a run so a missing rate is visible rather than silently under-counting.
+_UNPRICED = set()
 
 
 def normalize_model(name):
@@ -106,6 +115,8 @@ def normalize_model(name):
         return None
     if n.startswith("claude-"):
         parts = n[len("claude-"):].split("-")
+        # drop trailing date-stamp segments, e.g. claude-sonnet-4-20250514 → sonnet-4
+        parts = [p for p in parts if not (p.isdigit() and len(p) >= 6)]
         return "-".join(parts[:3]) if len(parts) >= 3 else "-".join(parts)
     if n == "opus":
         return "opus-4-7"
@@ -115,19 +126,41 @@ def normalize_model(name):
 def _provider_for_model(model):
     if not model:
         return None
-    return "openai" if model.startswith(("gpt", "o1", "o3", "o4")) else "anthropic"
+    return "openai" if (model.startswith(("gpt", "o1", "o3", "o4")) or "codex" in model) else "anthropic"
+
+
+def _model_version(key):
+    """Numeric version tuple from a price-table key, for picking the newest
+    same-family fallback (e.g. 'opus-4-8' → (4, 8), 'gpt-5.5' → (5, 5))."""
+    return tuple(int(x) for x in re.findall(r"\d+", key)) or (0,)
+
+
+def _rate_in_table(table, model):
+    """Exact match, else newest STANDARD same-family tier — never a premium
+    '-pro'/'-max' variant (which would massively over-charge an unseen model:
+    an unknown gpt-* must fall back to gpt-5.5, not gpt-5.5-pro)."""
+    if not table or not model:
+        return None
+    if model in table:
+        return table[model]
+    fam = model.split("-")[0]
+    cands = [k for k in table if k.split("-")[0] == fam]
+    if not cands:
+        return None
+    std = [k for k in cands if not k.endswith(("-pro", "-max"))] or cands
+    return table[max(std, key=_model_version)]
 
 
 def _rate_for(snapshot, model):
-    """Find a rate dict for `model` in a price snapshot, with a same-family
-    fallback (an unseen opus-x.y falls back to the newest opus entry)."""
+    """Rate for `model`, preferring the date-effective snapshot so genuine price
+    CHANGES stay historical. If the model is absent from that snapshot entirely
+    (i.e. it was only added to PRICES later — a fix, not a price change), fall
+    back to the current PRICES so historical usage of it is still costed."""
     prov = _provider_for_model(model)
-    table = (snapshot or {}).get(prov, {}) if prov else {}
-    if model in table:
-        return table[model]
-    fam = model.split("-")[0] if model else ""
-    fam_keys = sorted(k for k in table if k.split("-")[0] == fam)
-    return table[fam_keys[-1]] if fam_keys else None
+    if not model or not prov:
+        return None
+    return (_rate_in_table((snapshot or {}).get(prov, {}), model)
+            or _rate_in_table(PRICES.get(prov, {}), model))
 
 
 def _snapshot_for_date(prices, date_str):
@@ -151,6 +184,8 @@ def cost_of_models(models_dict, snapshot):
     for model, tk in models_dict.items():
         r = _rate_for(snapshot, model)
         if not r:
+            if model:
+                _UNPRICED.add(model)   # surfaced as a warning at end of run
             continue
         total += (
             tk.get("input", 0)        * r["input"]
@@ -772,6 +807,9 @@ def render_html(template_path, output_path, payload_json):
     if not template_path.exists():
         raise FileNotFoundError(f"template not found: {template_path}")
     html = template_path.read_text()
+    # Escape "</" so a session title/prompt containing "</script>" can't close the
+    # inline <script> and inject markup. "<\/" is valid JSON and parses identically.
+    payload_json = payload_json.replace("</", "<\\/")
     new_block = f"\nwindow.CLAUDE_ACTIVITY_DATA = {payload_json};\n"
     if not DATA_BLOCK_RE.search(html):
         raise RuntimeError("DATA_START / DATA_END markers missing in template")
@@ -1014,6 +1052,9 @@ def main():
     print(f"  months covered:  {len(available_union)}")
     print(f"  output:          {output_html}")
     print(f"  history:         {history_file}")
+    if _UNPRICED:
+        print(f"  ⚠ no price for:  {', '.join(sorted(_UNPRICED))} — costed $0; "
+              f"add rates to PRICES in generate.py")
 
     if "--open" in sys.argv or (auto_open and "--no-open" not in sys.argv):
         webbrowser.open(f"file://{output_html.resolve()}")
