@@ -100,10 +100,24 @@ threshold, auto-open, first day of week) and saves the answers to
    broken down by model and by type (input / output / cache-write / cache-read).
 5. **API cost**: each day's per-model tokens are multiplied by that model's
    published per-token rates (input / output / cache-write / cache-read) using
-   the price snapshot effective on that date. Edit the `PRICES` table at the
-   top of `lib/generate.py` when a published rate changes — the next run appends
-   a new dated snapshot to `history.json` and keeps the old ones, so historical
-   months stay costed at their original rates.
+   the price snapshot effective on that date. Rates come from the `PRICES` table
+   in `lib/generate.py`, optionally overridden by `output_dir/prices.json` (so
+   you can correct or update prices without editing code). When rates change the
+   next run **appends** a new dated snapshot to `history.json` and never
+   overwrites the old ones, so past days stay costed at their original rates. If
+   `prices.json` includes an `"effective": "YYYY-MM-DD"` (the real change date),
+   the snapshot is stamped with it and backfills correctly even if the plugin
+   only runs days later; otherwise it is stamped with the run date. A model with
+   no rate is costed $0 and reported with a ⚠ warning.
+
+   `prices.json` shape:
+   ```json
+   {
+     "effective": "2026-06-09",
+     "anthropic": { "fable-5": {"input": 10, "output": 50, "cache_write": 12.5, "cache_read": 1} },
+     "openai":    { "gpt-5.5":  {"input": 5,  "output": 30, "cache_write": 0,    "cache_read": 0.5} }
+   }
+   ```
 6. Output is merged with `~/.claude-activity/history.json` so months Claude
    Code later prunes from disk are preserved in the dashboard. Merge takes
    `max` per bucket — safe across pruning and re-runs.

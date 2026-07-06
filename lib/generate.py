@@ -160,7 +160,7 @@ def _rate_for(snapshot, model):
     if not model or not prov:
         return None
     return (_rate_in_table((snapshot or {}).get(prov, {}), model)
-            or _rate_in_table(PRICES.get(prov, {}), model))
+            or _rate_in_table(_effective_prices().get(prov, {}), model))
 
 
 def _snapshot_for_date(prices, date_str):
@@ -196,19 +196,77 @@ def cost_of_models(models_dict, snapshot):
     return total
 
 
+_EFFECTIVE_PRICES = None
+_OVERRIDE_EFFECTIVE = None   # explicit change date from prices.json, if any
+
+
+def _effective_prices():
+    """Hardcoded PRICES with an optional local override layered on top:
+    output_dir/prices.json ({"effective": "YYYY-MM-DD"?, "anthropic": {model:
+    {...}}, "openai": {...}}). Lets prices be corrected or kept current WITHOUT
+    editing code — whatever populates that file (a daily refresh, a manual edit)
+    flows through here. An optional top-level `effective` date is the REAL date
+    the rates changed, so the snapshot backfills correctly even if the plugin
+    only runs days later (see update_price_book). Read once per run."""
+    global _EFFECTIVE_PRICES, _OVERRIDE_EFFECTIVE
+    if _EFFECTIVE_PRICES is not None:
+        return _EFFECTIVE_PRICES
+    eff = {"anthropic": dict(PRICES["anthropic"]), "openai": dict(PRICES["openai"])}
+    try:
+        cfg = load_config()
+        ov = Path(os.path.expanduser(cfg.get("output_dir", DEFAULTS["output_dir"]))) / "prices.json"
+        if ov.exists():
+            data = json.loads(ov.read_text())
+            e = data.get("effective")
+            if isinstance(e, str) and e.strip():
+                _OVERRIDE_EFFECTIVE = e.strip()
+            for prov in ("anthropic", "openai"):
+                for m, r in (data.get(prov) or {}).items():
+                    if isinstance(r, dict) and "input" in r and "output" in r:
+                        eff.setdefault(prov, {})[m] = {
+                            "input": float(r.get("input", 0)),
+                            "output": float(r.get("output", 0)),
+                            "cache_write": float(r.get("cache_write", 0)),
+                            "cache_read": float(r.get("cache_read", 0)),
+                        }
+    except (OSError, json.JSONDecodeError, ValueError, TypeError):
+        pass
+    _EFFECTIVE_PRICES = eff
+    return eff
+
+
+def _override_effective_date():
+    _effective_prices()   # ensures _OVERRIDE_EFFECTIVE is populated
+    return _OVERRIDE_EFFECTIVE
+
+
 def _current_price_snapshot():
-    return {"anthropic": dict(PRICES["anthropic"]), "openai": dict(PRICES["openai"])}
+    eff = _effective_prices()
+    return {"anthropic": dict(eff["anthropic"]), "openai": dict(eff["openai"])}
 
 
-def update_price_book(history_prices):
-    """Reflect the current PRICES while preserving history. Seeds a baseline
-    snapshot if empty; appends a today-dated snapshot when current rates differ
-    from the latest stored ones."""
+def update_price_book(history_prices, effective=None):
+    """Reflect the current prices while preserving history. Old snapshots are
+    never overwritten — a change appends a NEW dated snapshot, and each day is
+    costed by the snapshot effective on its date.
+
+    `effective` is the REAL date the rates changed (from prices.json). When
+    given, the snapshot is stamped with THAT date, so a change on Monday that
+    the plugin only sees on Friday still backfills Mon–Thu correctly. Without
+    it, the snapshot is stamped with the run date (so days before the run keep
+    the previous rate — the plugin can't know a change date it was never told)."""
     cur = _current_price_snapshot()
     rates = lambda s: {k: v for k, v in s.items() if k != "effective"}
     if not history_prices:
-        return [{"effective": PRICE_EFFECTIVE, **cur}]
+        return [{"effective": effective or PRICE_EFFECTIVE, **cur}]
     ordered = sorted(history_prices, key=lambda s: s.get("effective", ""))
+    if effective:
+        # Upsert a snapshot AT the real change date (may be in the past → backfill).
+        others = [s for s in ordered if s.get("effective") != effective]
+        prior = [s for s in others if s.get("effective", "") <= effective]
+        if prior and rates(prior[-1]) == rates(cur):
+            return sorted(others, key=lambda s: s.get("effective", ""))  # no change vs the rate already in effect then
+        return sorted(others + [{"effective": effective, **cur}], key=lambda s: s.get("effective", ""))
     if rates(ordered[-1]) == rates(cur):
         return ordered
     today = datetime.now().astimezone().date().isoformat()
@@ -1086,7 +1144,8 @@ def main():
 
     print("Building buckets ...")
     history_by_source = _load_history_sources(history_file)
-    price_book = update_price_book(_load_history_prices(history_file))
+    price_book = update_price_book(_load_history_prices(history_file),
+                                   effective=_override_effective_date())
     sources_payload = {}
     sources_history = {}
 
