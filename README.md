@@ -4,8 +4,9 @@ A local, privacy-respecting **heatmap of your AI coding usage** — Claude Code
 *and* Codex CLI — see when you actually worked, by hour of day × day of
 month, with project / session breakdown on hover. Everything is computed on
 your machine from `~/.claude/projects/**/*.jsonl` and
-`~/.codex/sessions/**/*.jsonl`; no server, no telemetry, no external
-services.
+`~/.codex/sessions/**/*.jsonl`; no server, no telemetry. The only outbound
+request is a once-a-day fetch of the public Anthropic/OpenAI pricing pages to
+keep API-cost estimates current (nothing about your usage is sent).
 
 ![screenshot](docs/screenshot.png)
 
@@ -30,12 +31,17 @@ services.
   `history.json` with an effective date; old snapshots are never deleted, so
   every day is costed at the rates in effect on that day (past months are not
   re-priced when rates change)
+- **Auto price refresh** — the first `/activity` each day silently fetches the
+  official Anthropic/OpenAI pricing pages and writes `prices.json`; out-of-range
+  values are ignored as a safety net. This is the only network call the plugin
+  makes; disable it by removing Step 2.5 from `commands/activity.md`
 - **Today's column is highlighted** when viewing the current month
 - **Persistent history.json** — survives Claude/Codex pruning old session files,
   with a one-step `history.json.bak` rollback written before every update
 - Configurable: work days, work hours, gap threshold, first day of week,
   auto-open
-- 100% local, single HTML file, opens from `file://`
+- Single self-contained HTML dashboard, opens from `file://`; no server, no
+  telemetry (the dashboard itself makes no network calls)
 
 ## Install
 

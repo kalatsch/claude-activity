@@ -1,6 +1,6 @@
 ---
 description: Generate and open a local heatmap of your Claude Code activity
-allowed-tools: Bash(python3 *), Bash(open *), Bash(xdg-open *), Bash(test *), Bash(echo *), Bash(cat *)
+allowed-tools: Bash(python3 *), Bash(open *), Bash(xdg-open *), Bash(test *), Bash(echo *), Bash(cat *), WebFetch, Read, Write
 argument-hint: "[--settings | --compact | --help | --no-open]"
 ---
 
@@ -123,6 +123,48 @@ e.g.:
   "output_dir": "~/.claude-activity"
 }
 ```
+
+## Step 2.5 — Refresh prices once per day (SILENT — no chat output)
+
+Keep API prices current automatically. Do everything here silently; never
+narrate it. Skip entirely if `--help`, `--settings`, or `--compact` was passed.
+
+1. Gate to once per day:
+
+```bash
+python3 -c "import json,os,datetime; p=os.path.expanduser('~/.claude-activity/prices.json'); d=json.load(open(p)) if os.path.exists(p) else {}; print('SKIP' if d.get('fetched')==datetime.date.today().isoformat() else 'FETCH')"
+```
+
+If it prints `SKIP`, go straight to Step 3. Only continue when it prints `FETCH`.
+
+2. Fetch current pricing (best-effort; on any failure, do NOT write — keep the
+   existing file and continue to Step 3):
+   - `WebFetch` `https://platform.claude.com/docs/en/about-claude/pricing`
+     (follow the redirect if returned). From the **Model pricing** table read,
+     per model: *Base Input Tokens* → `input`, *5m Cache Writes* → `cache_write`,
+     *Cache Hits & Refreshes* → `cache_read`, *Output Tokens* → `output`. Strip
+     `$` and `/ MTok`; keep the USD-per-million number. For Sonnet 5 use the
+     currently-effective row.
+   - `WebFetch` `https://platform.openai.com/docs/pricing` (follow redirect) for
+     `gpt-5.5` (and `gpt-5.5-pro` if listed): standard `input`, cached input →
+     `cache_read`, `output`; `cache_write` = 0.
+
+3. Map model display names to these exact keys (skip any you can't read
+   confidently): Fable 5→`fable-5`, Mythos 5→`mythos-5`, Opus 4.8→`opus-4-8`,
+   Opus 4.7→`opus-4-7`, Opus 4.6→`opus-4-6`, Opus 4.5→`opus-4-5`,
+   Sonnet 5→`sonnet-5`, Sonnet 4.6→`sonnet-4-6`, Sonnet 4.5→`sonnet-4-5`,
+   Haiku 4.5→`haiku-4-5`; `gpt-5.5`, `gpt-5.5-pro`.
+
+4. `Write` `~/.claude-activity/prices.json` (overwrite):
+
+```json
+{"fetched":"<today YYYY-MM-DD>","anthropic":{"<key>":{"input":N,"output":N,"cache_write":N,"cache_read":N}},"openai":{"<key>":{...}}}
+```
+
+   Include only models read with confidence. Add `"effective":"YYYY-MM-DD"` ONLY
+   if the page states the new rates start on a specific date; otherwise omit it
+   (generate.py stamps the snapshot with the run date). generate.py ignores any
+   out-of-range value as a safety net, but aim for exact numbers.
 
 ## Step 3 — Generate
 

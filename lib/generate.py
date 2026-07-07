@@ -200,6 +200,29 @@ _EFFECTIVE_PRICES = None
 _OVERRIDE_EFFECTIVE = None   # explicit change date from prices.json, if any
 
 
+def _sane_rate(r):
+    """Validate one override rate dict; return a clean copy or None. Guards the
+    daily auto-refresh: a mis-parsed/garbage value is ignored (falls back to the
+    built-in PRICES) rather than silently corrupting cost. Bounds: input/output
+    must be > 0, everything within [0, 1000] $/MTok, cache-read ≤ 2× input,
+    cache-write ≤ 4× input."""
+    if not isinstance(r, dict):
+        return None
+    try:
+        inp = float(r["input"]); out = float(r["output"])
+        cw = float(r.get("cache_write", 0)); cr = float(r.get("cache_read", 0))
+    except (KeyError, TypeError, ValueError):
+        return None
+    vals = (inp, out, cw, cr)
+    if inp <= 0 or out <= 0:
+        return None
+    if any(v < 0 or v > 1000 for v in vals):
+        return None
+    if cr > inp * 2 or cw > inp * 4:
+        return None
+    return {"input": inp, "output": out, "cache_write": cw, "cache_read": cr}
+
+
 def _effective_prices():
     """Hardcoded PRICES with an optional local override layered on top:
     output_dir/prices.json ({"effective": "YYYY-MM-DD"?, "anthropic": {model:
@@ -222,13 +245,9 @@ def _effective_prices():
                 _OVERRIDE_EFFECTIVE = e.strip()
             for prov in ("anthropic", "openai"):
                 for m, r in (data.get(prov) or {}).items():
-                    if isinstance(r, dict) and "input" in r and "output" in r:
-                        eff.setdefault(prov, {})[m] = {
-                            "input": float(r.get("input", 0)),
-                            "output": float(r.get("output", 0)),
-                            "cache_write": float(r.get("cache_write", 0)),
-                            "cache_read": float(r.get("cache_read", 0)),
-                        }
+                    rate = _sane_rate(r)
+                    if rate:
+                        eff.setdefault(prov, {})[m] = rate
     except (OSError, json.JSONDecodeError, ValueError, TypeError):
         pass
     _EFFECTIVE_PRICES = eff
