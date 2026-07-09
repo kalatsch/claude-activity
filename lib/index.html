@@ -1025,7 +1025,7 @@
           <div class="sw" style="background:var(--c3)"></div>
           <div class="sw" style="background:var(--c4)"></div>
         </div>
-        <span style="margin-left:14px">Off hours (Mon-Fri)</span>
+        <span class="leg-off-label" style="margin-left:14px">Off hours (Mon-Fri)</span>
         <div class="swatches">
           <div class="sw" style="background:var(--y1)"></div>
           <div class="sw" style="background:var(--y2)"></div>
@@ -1079,6 +1079,20 @@ function monIdxOf(jsDay) { return (jsDay + 6) % 7; } // JS getDay() → Mon-firs
 function isWorkHour(h) { return WORK_INTERVALS.some(([s, e]) => h >= s && h < e); }
 function formatIntervals(intervals) {
   return intervals.map(([s, e]) => `${s}–${e}`).join(", ");
+}
+// Human label for the configured work-days set (Mon-first indices 0=Mon…6=Sun):
+// contiguous → "Mon–Fri", all seven → "All week", otherwise a short list.
+const WEEKDAY_MON_FIRST = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+function formatWorkDays() {
+  const days = [...WORK_DAYS]
+    .filter(d => Number.isInteger(d) && d >= 0 && d <= 6)
+    .sort((a, b) => a - b);
+  if (!days.length) return "No days";
+  if (days.length === 7) return "All week";
+  const contiguous = days.every((d, i) => i === 0 || d === days[i - 1] + 1);
+  return contiguous
+    ? `${WEEKDAY_MON_FIRST[days[0]]}–${WEEKDAY_MON_FIRST[days[days.length - 1]]}`
+    : days.map(d => WEEKDAY_MON_FIRST[d]).join(", ");
 }
 
 function classifyCell(year, monthIdx, day, hour) {
@@ -1678,8 +1692,9 @@ function renderStats() {
   }
   const tokensVal = haveProjTokens ? countSpan(totalTokens, "tok", formatTokens(totalTokens)) : "—";
   const costVal = haveProjTokens ? countSpan(totalCost, "money", formatMoney(totalCost)) : "—";
+  const cacheW = Number.isFinite(DATA.cache_read_weight) ? DATA.cache_read_weight : 0.1;
   const tokensNote = haveProjTokens
-    ? "input + output + cache‑create + 0.1 × cache‑read"
+    ? `input + output + cache‑create + ${cacheW} × cache‑read`
     : "per-project tokens not tracked for this month";
   const costNote = haveProjTokens
     ? "if billed at public API rates, per model"
@@ -1701,8 +1716,8 @@ function renderStats() {
      </div>
      <div class="group">
        <div class="stats-subtitle">${activeDays} active days · avg ${countSpan(avg, "dur", formatDuration(avg))}</div>
-       ${row("sub", `Mon-Fri ${formatIntervals(WORK_INTERVALS)} (work)`, countSpan(work, "dur", formatDuration(work)))}
-       ${row("sub", "Mon-Fri off-hours", countSpan(off, "dur", formatDuration(off)), pct(off))}
+       ${row("sub", `${formatWorkDays()} ${formatIntervals(WORK_INTERVALS)} (work)`, countSpan(work, "dur", formatDuration(work)))}
+       ${row("sub", `${formatWorkDays()} off-hours`, countSpan(off, "dur", formatDuration(off)), pct(off))}
        ${row("sub", "Weekends", countSpan(wknd, "dur", formatDuration(wknd)), pct(wknd))}
      </div>
      <div class="group">
@@ -2029,7 +2044,9 @@ if (!window.CLAUDE_ACTIVITY_DATA) {
   if (Array.isArray(DATA.work_days)) setDef("cfgDays", "[" + DATA.work_days.join(", ") + "]");
   setDef("cfgFdow", FIRST_DAY_OF_WEEK);
   const legW = document.querySelector(".leg-work-label");
-  if (legW) legW.textContent = `Work (Mon-Fri ${formatIntervals(WORK_INTERVALS)})`;
+  if (legW) legW.textContent = `Work (${formatWorkDays()} ${formatIntervals(WORK_INTERVALS)})`;
+  const legO = document.querySelector(".leg-off-label");
+  if (legO) legO.textContent = `Off hours (${formatWorkDays()})`;
   // Pick initial source: stored preference → payload default → "both".
   let initialSource = DATA.default_source || "both";
   try {
