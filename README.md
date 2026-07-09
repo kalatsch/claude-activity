@@ -98,7 +98,15 @@ threshold, auto-open, first day of week) and saves the answers to
    files).
 2. For each consecutive pair of events whose gap is ≤ `gap_minutes`, the
    duration is attributed to the later event's project / session and split
-   across hour-of-day buckets.
+   across hour-of-day buckets. **A session's project is the enclosing git
+   repo**, not the working directory's leaf folder — work in a subdirectory
+   (`<repo>/docs/specs`) or in a git **worktree**
+   (`<repo>/.claude-worktrees/<branch>`, including Claude Code's own isolated
+   worktrees) rolls up to the repo instead of surfacing as its own project.
+   The worktree/branch name is kept as the session's label. Names that older
+   versions recorded as standalone projects are migrated on load and the
+   rename map is persisted in `history.json`, so the fix holds even after the
+   raw logs are pruned.
 3. **Day categorisation** uses `work_days` + `work_intervals`:
    `work` (in-window weekday), `off` (out-of-window weekday), `wknd`
    (non-work day).
@@ -160,8 +168,9 @@ newest 14 per-day snapshots are kept.
 
 Session activity is deduplicated by session id, so the per-project time filter
 can't be inflated by a session's title changing between runs. `/activity
---compact` is a one-off cleanup that collapses any such legacy duplicates and
-archives the pre-compaction backups into `output_dir/pre-compact-<timestamp>/`.
+--compact` is a one-off cleanup that collapses any such legacy duplicates,
+applies the persisted project-rename map (see step 2), and archives the
+pre-compaction backups into `output_dir/pre-compact-<timestamp>/`.
 
 ## Comparison with `session-report` (Anthropic, official)
 
