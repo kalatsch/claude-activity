@@ -4,9 +4,11 @@ A local, privacy-respecting **heatmap of your AI coding usage** — Claude Code
 *and* Codex CLI — see when you actually worked, by hour of day × day of
 month, with project / session breakdown on hover. Everything is computed on
 your machine from `~/.claude/projects/**/*.jsonl` and
-`~/.codex/sessions/**/*.jsonl`; no server, no telemetry. The only outbound
-request is a once-a-day fetch of the public Anthropic/OpenAI pricing pages to
-keep API-cost estimates current (nothing about your usage is sent).
+`~/.codex/sessions/**/*.jsonl`; no server, no telemetry, and nothing about
+your usage is ever sent. Two incidental outbound requests exist: a once-a-day
+fetch of the public Anthropic/OpenAI pricing pages (to keep API-cost estimates
+current), and the web fonts the dashboard loads from Google Fonts when you open
+it in a browser (system fonts are used as a fallback offline).
 
 ![screenshot](docs/screenshot.png)
 
@@ -33,15 +35,17 @@ keep API-cost estimates current (nothing about your usage is sent).
   re-priced when rates change)
 - **Auto price refresh** — the first `/activity` each day silently fetches the
   official Anthropic/OpenAI pricing pages and writes `prices.json`; out-of-range
-  values are ignored as a safety net. This is the only network call the plugin
-  makes; disable it by removing Step 2.5 from `commands/activity.md`
+  values are ignored as a safety net. This is the only network call the
+  *generator* makes (the dashboard itself also loads web fonts from Google Fonts
+  on open); disable it by removing Step 2.5 from `commands/activity.md`
 - **Today's column is highlighted** when viewing the current month
 - **Persistent history.json** — survives Claude/Codex pruning old session files,
-  with a one-step `history.json.bak` rollback written before every update
+  with a one-step `history.json.bak` copy of the freshly-merged result written
+  on every run
 - Configurable: work days, work hours, gap threshold, first day of week,
   auto-open
-- Single self-contained HTML dashboard, opens from `file://`; no server, no
-  telemetry (the dashboard itself makes no network calls)
+- Single HTML dashboard, opens from `file://`; no server, no telemetry (the
+  only network request it makes is loading web fonts from Google Fonts)
 
 ## Install
 
@@ -75,7 +79,7 @@ Inside Claude Code:
 ```
 
 First run walks you through a short setup wizard (work days, work hours, gap
-threshold, auto-open, first day of week) and saves the answers to
+threshold, first day of week) and saves the answers to
 `~/.claude-activity/config.json`.
 
 ## Configuration
@@ -95,7 +99,7 @@ threshold, auto-open, first day of week) and saves the answers to
 ## How it works
 
 1. Walks every `.jsonl` under `~/.claude/projects/` (main sessions + sub-agent
-   files).
+   files) and every `.jsonl` under `~/.codex/sessions/`.
 2. For each consecutive pair of events whose gap is ≤ `gap_minutes`, the
    duration is attributed to the later event's project / session and split
    across hour-of-day buckets. **A session's project is the enclosing git
@@ -110,8 +114,9 @@ threshold, auto-open, first day of week) and saves the answers to
 3. **Day categorisation** uses `work_days` + `work_intervals`:
    `work` (in-window weekday), `off` (out-of-window weekday), `wknd`
    (non-work day).
-4. **Tokens**: every `assistant` event's `usage` block is summed per day,
-   broken down by model and by type (input / output / cache-write / cache-read).
+4. **Tokens**: every Claude `assistant` event's `usage` block (and every Codex
+   `token_count` event's usage) is summed per day, broken down by model and by
+   type (input / output / cache-write / cache-read).
 5. **API cost**: each day's per-model tokens are multiplied by that model's
    published per-token rates (input / output / cache-write / cache-read) using
    the price snapshot effective on that date. Rates come from the `PRICES` table
@@ -154,9 +159,11 @@ you want to fold in fresh sessions.
 ## Why a separate `history.json`
 
 Claude Code periodically deletes older session JSONL files. Without history,
-your heatmap would forget pruned months. `history.json` keeps only aggregated
-per-hour numbers (~65 KB for a year of dense usage) — far cheaper than
-backing up the raw 500 MB+ of JSONL.
+your heatmap would forget pruned months. `history.json` keeps only aggregates —
+per-hour active seconds, per-day per-model token/cost breakdowns, per-project
+token totals, the dated price snapshots, and the project-rename map (order of a
+megabyte for months of dense usage) — far cheaper than backing up the raw
+500 MB+ of JSONL.
 
 **Self-healing.** Every run writes the freshly-merged result to a one-step
 `history.json.bak` and a per-day `history-YYYY-MM-DD.bak.json` snapshot, and on
@@ -183,9 +190,11 @@ visually, across calendar months, and preserves history across pruning.
 
 ## Privacy
 
-- Reads from `~/.claude/projects/` only.
+- Reads from `~/.claude/projects/` and `~/.codex/sessions/` only.
 - Writes only to `output_dir` (default `~/.claude-activity/`).
-- Single static HTML opened from `file://` — no network, no logging.
+- Static HTML opened from `file://`; the only network request is the web fonts
+  it loads from Google Fonts (falling back to system fonts offline). No usage
+  data is ever transmitted.
 - All token / session data stays on your disk.
 
 ## Requirements

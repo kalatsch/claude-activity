@@ -42,11 +42,12 @@ block below verbatim **and stop**. No other text.
 
 Config file:  ~/.claude-activity/config.json
                 gap_minutes, work_intervals, work_days,
-                first_day_of_week, cache_read_weight, output_dir
+                first_day_of_week, auto_open, cache_read_weight, output_dir
 Output:       ~/.claude-activity/index.html (the dashboard)
 History:      ~/.claude-activity/history.json (preserves data after Claude
                 Code prunes old session JSONL files; a one-step
-                history.json.bak rollback is written before each update)
+                history.json.bak copy of the merged result is written on
+                each run)
 
 History is refreshed only when you run /activity (there are no background
 SessionStart/SessionEnd hooks), so nothing rewrites it behind your back.
