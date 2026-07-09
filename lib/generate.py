@@ -373,10 +373,55 @@ def load_config():
 
 
 # ---------- JSONL parsing ----------
+# Claude Code puts isolated worktrees at <repo>/.claude-worktrees/<name>/.
+WORKTREES_DIRNAME = ".claude-worktrees"
+
+# old stale project name → correct one, collected while parsing cwds (a
+# worktree folder used to surface as its own "project"). Applied to loaded
+# history and persisted there, so the fix survives log pruning and backups.
+WORKTREE_RENAMES = {}
+
+
+def _record_rename(old, new):
+    if old and new and old != new:
+        WORKTREE_RENAMES[old] = new
+
+
+def _linked_worktree_main(gitfile):
+    """For a linked worktree — where `.git` is a pointer *file* — return the
+    main repo directory its `gitdir:` leads to (…/<repo>/.git/worktrees/<name>),
+    or None when the pointer is unreadable or has an unexpected shape."""
+    try:
+        m = re.match(r"gitdir:\s*(.+)", gitfile.read_text().strip())
+    except OSError:
+        return None
+    if not m:
+        return None
+    gd = Path(m.group(1).strip())
+    if not gd.is_absolute():
+        try:
+            gd = (gitfile.parent / gd).resolve()
+        except OSError:
+            return None
+    for anc in gd.parents:
+        if anc.name == ".git":
+            return anc.parent
+    return None
+
+
 def project_name_from_cwd(cwd):
     if not cwd:
         return "unknown"
     p = Path(cwd)
+    # A worktree is part of its repo's work, not a project of its own.
+    # <repo>/.claude-worktrees/<wt>/... attributes to <repo> by pure path
+    # logic, so it keeps working after the worktree folder is deleted.
+    parts = p.parts
+    if WORKTREES_DIRNAME in parts:
+        i = parts.index(WORKTREES_DIRNAME)
+        if i > 0 and len(parts) > i + 1:
+            _record_rename(parts[i + 1], parts[i - 1])
+            return parts[i - 1]
     # Attribute to the enclosing git repo's folder name, so work in a nested
     # subdirectory (e.g. <repo>/docs/specs or
     # <repo>/docs/product-team/<ticket>) rolls up to the repo instead of
@@ -384,8 +429,17 @@ def project_name_from_cwd(cwd):
     # segment when the path is not inside a git repo (or no longer exists).
     for anc in (p, *p.parents):
         try:
-            if (anc / ".git").exists():
-                return anc.name or cwd
+            g = anc / ".git"
+            if not g.exists():
+                continue
+            if g.is_file():
+                # Linked worktree anywhere else: follow the pointer file to
+                # the main repo instead of naming the worktree folder.
+                main = _linked_worktree_main(g)
+                if main is not None and main.name:
+                    _record_rename(anc.name, main.name)
+                    return main.name
+            return anc.name or cwd
         except OSError:
             break
     return p.name or cwd
@@ -394,13 +448,21 @@ def project_name_from_cwd(cwd):
 def cwd_sublabel(cwd):
     """Leaf subfolder name when cwd is *inside* a git repo (below its root) —
     used as a human-label fallback so sessions rolled up to the repo aren't all
-    'no title'. Empty when cwd is the repo root or not inside a repo."""
+    'no title'. Empty when cwd is the repo root or not inside a repo. For a
+    worktree the worktree folder itself is the label: the session rolls up to
+    the main repo, and the folder usually carries the branch/ticket name."""
     if not cwd:
         return ""
     p = Path(cwd)
+    parts = p.parts
+    if WORKTREES_DIRNAME in parts and len(parts) > parts.index(WORKTREES_DIRNAME) + 1:
+        return p.name
     for anc in (p, *p.parents):
         try:
-            if (anc / ".git").exists():
+            g = anc / ".git"
+            if g.is_file():
+                return p.name
+            if g.is_dir():
                 return "" if anc == p else p.name
         except OSError:
             break
@@ -858,6 +920,52 @@ def merge_proj_models(a, b):
             for p in set(a or {}) | set(b or {})}
 
 
+def _sum_models(a, b):
+    """Per-model, per-field SUM — for collapsing two genuinely distinct
+    attributions of one day (unlike merge_models' pruning-safe max)."""
+    out = {}
+    for mdl in set(a or {}) | set(b or {}):
+        av = (a or {}).get(mdl, {})
+        bv = (b or {}).get(mdl, {})
+        out[mdl] = {
+            f: av.get(f, 0) + bv.get(f, 0)
+            for f in ("input", "output", "cache_read", "cache_create")
+        }
+    return out
+
+
+def apply_project_renames(months, renames):
+    """Rewrite stale project names in a loaded history months dict in place —
+    e.g. a worktree folder that older runs recorded as its own project. When a
+    day carries aggregates for both the old and the new name they are summed:
+    the two names were disjoint attributions of that day's events, never
+    duplicates of each other."""
+    if not renames:
+        return months
+    for mval in months.values():
+        for day in (mval.get("days") or {}).values():
+            for items in (day.get("sessions") or {}).values():
+                for it in items or []:
+                    proj = it.get("project")
+                    if proj in renames:
+                        it["project"] = renames[proj]
+            pt = day.get("proj_tokens")
+            if pt and any(p in renames for p in pt):
+                out = {}
+                for pname, v in pt.items():
+                    t = renames.get(pname, pname)
+                    out[t] = out.get(t, 0) + v
+                day["proj_tokens"] = out
+            pm = day.get("proj_models")
+            if pm and any(p in renames for p in pm):
+                out = {}
+                for pname, models in pm.items():
+                    t = renames.get(pname, pname)
+                    out[t] = _sum_models(out[t], models) if t in out else models
+                day["proj_models"] = out
+    return months
+
+
 def merge_months(current, history):
     merged = {}
     for mkey in set(current) | set(history):
@@ -1004,6 +1112,24 @@ def _load_history_prices(history_file):
     return [by_eff[e] for e in sorted(by_eff)]
 
 
+def _load_history_renames(history_file):
+    """Union of persisted project-rename maps across history.json and all
+    backups. Persisting the map is what keeps renamed history stable: older
+    backups still carry the stale names, and once the JSONL logs that revealed
+    the rename are pruned it could no longer be re-derived from cwds."""
+    renames = {}
+    for p in _iter_history_files(history_file):
+        try:
+            raw = json.loads(p.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        pr = raw.get("project_renames")
+        if isinstance(pr, dict):
+            renames.update({k: v for k, v in pr.items()
+                            if isinstance(k, str) and isinstance(v, str) and k != v})
+    return renames
+
+
 def _fmt_hours(secs):
     return f"{int(secs // 3600)} h {int((secs % 3600) // 60)} min"
 
@@ -1099,7 +1225,10 @@ def compact_history(output_dir):
     history_file = output_dir / "history.json"
     by_source = _load_history_sources(history_file)   # self-heals across every backup
     prices = _load_history_prices(history_file)
+    renames = _load_history_renames(history_file)
     before = after = 0
+    for months in by_source.values():
+        apply_project_renames(months, renames)
     for months in by_source.values():
         for mval in months.values():
             for day in mval.get("days", {}).values():
@@ -1112,7 +1241,8 @@ def compact_history(output_dir):
                     sessions[hk] = rep
     sources_history = {s: {"months": by_source.get(s, {})} for s in SOURCES}
     text = json.dumps({"updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-                       "sources": sources_history, "prices": prices},
+                       "sources": sources_history, "prices": prices,
+                       "project_renames": renames},
                       ensure_ascii=False, indent=2)
     stamp = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
     archive = output_dir / ("pre-compact-" + stamp)
@@ -1163,6 +1293,12 @@ def main():
 
     print("Building buckets ...")
     history_by_source = _load_history_sources(history_file)
+    # Stale project names in history (worktrees recorded as own projects):
+    # persisted renames from previous runs + any discovered from this run's cwds.
+    project_renames = {**_load_history_renames(history_file), **WORKTREE_RENAMES}
+    if project_renames:
+        for s in SOURCES:
+            apply_project_renames(history_by_source.get(s, {}), project_renames)
     price_book = update_price_book(_load_history_prices(history_file),
                                    effective=_override_effective_date())
     sources_payload = {}
@@ -1197,7 +1333,8 @@ def main():
     history_text = json.dumps(
         {"updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
          "sources": sources_history,
-         "prices": price_book},
+         "prices": price_book,
+         "project_renames": project_renames},
         ensure_ascii=False, indent=2,
     )
     history_file.write_text(history_text)
