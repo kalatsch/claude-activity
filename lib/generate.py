@@ -53,6 +53,7 @@ def normalize_config(cfg):
     return cfg
 
 PROJECTS_DIR = Path.home() / ".claude" / "projects"
+PROMPT_HISTORY_FILE = Path.home() / ".claude" / "history.jsonl"
 CODEX_SESSIONS_DIR = Path.home() / ".codex" / "sessions"
 SCRIPT_DIR = Path(__file__).resolve().parent
 TEMPLATE_FILE = SCRIPT_DIR / "index.html"
@@ -578,6 +579,61 @@ def collect_claude():
     return events, session_meta
 
 
+def collect_prompt_history():
+    """Read ~/.claude/history.jsonl — the prompt log Claude Code keeps and does
+    NOT prune together with the session JSONLs — into low-fidelity 'claude'
+    events: (ts, None, sessionId, project, "claude").
+
+    This backfills active time for periods whose session logs are already
+    deleted (each prompt is an activity marker; the normal gap bucketing turns
+    dense prompt runs into hours). Overlap with surviving logs is harmless by
+    construction: prompts are a sparse subset of the real event stream, so the
+    interval union doesn't grow where real events exist, hour merges take max,
+    and session items dedup by the real sessionId these entries carry.
+    """
+    events = []
+    session_meta = {}
+    try:
+        with open(PROMPT_HISTORY_FILE) as f:
+            lines = f.readlines()
+    except OSError:
+        return events, session_meta
+    for line in lines:
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        ts_raw = obj.get("timestamp")
+        cwd = obj.get("project")
+        sid = obj.get("sessionId")
+        if not (isinstance(ts_raw, (int, float)) and cwd and sid):
+            continue
+        if ts_raw > 1e12:      # epoch milliseconds
+            ts_raw /= 1000.0
+        try:
+            ts = datetime.fromtimestamp(ts_raw).astimezone()
+        except (OverflowError, OSError, ValueError):
+            continue
+        proj = project_name_from_cwd(cwd)
+        events.append((ts, None, sid, proj, "claude"))
+        disp = obj.get("display")
+        title = disp.strip() if isinstance(disp, str) else ""
+        if title.startswith("/"):      # slash command — not descriptive
+            title = ""
+        if len(title) > 80:
+            title = title[:77] + "…"
+        prev = session_meta.get(sid)
+        if prev is None:
+            session_meta[sid] = {"project": proj, "title": title,
+                                 "source": "claude"}
+        elif title and not prev["title"]:
+            prev["title"] = title
+    events.sort(key=lambda e: e[0])
+    return events, session_meta
+
+
 def _codex_tokens_from_event(payload, model=None):
     """Codex `event_msg.payload.type=token_count` carries per-turn usage in
     `last_token_usage`. Map onto the same shape as Claude's extract_tokens().
@@ -700,6 +756,12 @@ def collect():
         session_meta = {sid: {project, title}}   # merged
     """
     claude_events, claude_meta = collect_claude()
+    prompt_events, prompt_meta = collect_prompt_history()
+    if prompt_events:
+        claude_events = sorted(claude_events + prompt_events,
+                               key=lambda e: e[0])
+        # Real-log meta is richer (AI titles, branch fallbacks) — it wins.
+        claude_meta = {**prompt_meta, **claude_meta}
     codex_events, codex_meta = collect_codex()
     both_events = sorted(claude_events + codex_events, key=lambda e: e[0])
     session_meta = {**claude_meta, **codex_meta}
@@ -1303,16 +1365,31 @@ def main():
                                    effective=_override_effective_date())
     sources_payload = {}
     sources_history = {}
+    merged_by_source = {}
+    run_seconds = {}
 
     for src in SOURCES:
         ev = events_by_source[src]
         hour_b, sess_b, day_tok, day_models, day_proj_tok, day_proj_models = build_buckets(ev, gap_limit, cache_read_weight)
         current_months = shape_output(hour_b, sess_b, day_tok, day_models, session_meta,
                                       day_proj_tok, day_proj_models)
-        merged_months = merge_months(current_months, history_by_source.get(src, {}))
+        merged_by_source[src] = merge_months(current_months, history_by_source.get(src, {}))
+        run_seconds[src] = sum(hour_b.values())
+
+    # Self-heal the union: unlike claude/codex, "both" cannot rebuild lost
+    # days from its own history (it postdates the per-source schema, and any
+    # day its history misses is gone even though the per-source history still
+    # has it). Fold the per-source months back in — per-hour max is a safe
+    # lower bound for a union, and session items dedup by sid.
+    merged_by_source["both"] = merge_months(
+        merge_months(merged_by_source["both"], merged_by_source["claude"]),
+        merged_by_source["codex"])
+
+    for src in SOURCES:
+        merged_months = merged_by_source[src]
         total_cost = apply_costs(merged_months, price_book)
         available = sorted(merged_months.keys())
-        total_sec_run = sum(hour_b.values())
+        total_sec_run = run_seconds[src]
         total_sec_merged = sum(m["total"] for m in merged_months.values())
         total_tokens = sum(m.get("tokens_total", 0) for m in merged_months.values())
         sources_payload[src] = {
@@ -1321,7 +1398,7 @@ def main():
             "total_seconds": total_sec_merged,
             "total_tokens": total_tokens,
             "total_cost": total_cost,
-            "events_count": len(ev),
+            "events_count": len(events_by_source[src]),
         }
         sources_history[src] = {"months": merged_months}
         print(f"  [{src:>6}] this run: {_fmt_hours(total_sec_run)} · "

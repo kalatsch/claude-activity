@@ -42,6 +42,9 @@ it in a browser (system fonts are used as a fallback offline).
 - **Persistent history.json** — survives Claude/Codex pruning old session files,
   with a one-step `history.json.bak` copy of the freshly-merged result written
   on every run
+- **Prompt-history backfill** — recovers active hours for sessions whose JSONL
+  logs Claude Code already pruned (even from before the plugin was installed)
+  from `~/.claude/history.jsonl`; time only, no tokens/cost
 - Configurable: work days, work hours, gap threshold, first day of week,
   auto-open
 - Single HTML dashboard, opens from `file://`; no server, no telemetry (the
@@ -137,10 +140,26 @@ threshold, first day of week) and saves the answers to
      "openai":    { "gpt-5.5":  {"input": 5,  "output": 30, "cache_write": 0,    "cache_read": 0.5} }
    }
    ```
-6. Output is merged with `~/.claude-activity/history.json` so months Claude
+6. **Prompt-history backfill**: `~/.claude/history.jsonl` (the prompt log
+   Claude Code keeps and does not prune together with the session JSONLs) is
+   read as an extra stream of token-less activity markers carrying the real
+   `sessionId`. Dense prompt runs recover active hours for periods whose
+   session logs were already deleted — including periods **before the plugin
+   was first installed**. Overlap with surviving logs is harmless: prompts are
+   a sparse subset of the real event stream, hour merges take `max`, and
+   session items dedup by `sessionId`. Backfilled time carries no tokens, so
+   token/cost totals never inflate. Note this is a **lower bound**: only
+   prompt-to-prompt gaps ≤ `gap_minutes` count, so sparse prompting during
+   long autonomous turns is under-counted.
+7. Output is merged with `~/.claude-activity/history.json` so months Claude
    Code later prunes from disk are preserved in the dashboard. Merge takes
-   `max` per bucket — safe across pruning and re-runs.
-7. On each run the installed plugin **prunes its own stale cache versions** —
+   `max` per bucket — safe across pruning and re-runs. The union (`both`)
+   source additionally **self-heals from the per-source history**: any
+   day/hour present in `claude` or `codex` history but missing from `both`
+   (the union schema postdates them, and a clobber would otherwise lose it
+   for good) is folded back in — per-hour `max` is a safe lower bound for a
+   union, and session items dedup by `sessionId`.
+8. On each run the installed plugin **prunes its own stale cache versions** —
    sibling directories under `~/.claude/plugins/cache/.../claude-activity/` that
    belong to older releases (which may carry the legacy history writer or old
    hooks) are removed, so outdated code can't run and clobber data. This never
