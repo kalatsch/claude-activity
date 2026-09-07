@@ -773,17 +773,44 @@ def collect():
 
 
 # ---------- Bucketing ----------
-def distribute_interval(start, end, sid, hours, sessions):
+def _split_by_hour(start, end):
+    """Yield ((y, m, d, h), seconds) chunks of [start, end) per clock hour."""
     cur = start
     while cur < end:
         nxt = (cur.replace(minute=0, second=0, microsecond=0)
                + timedelta(hours=1))
         sl = min(end, nxt)
-        sec = (sl - cur).total_seconds()
-        key = (cur.year, cur.month, cur.day, cur.hour)
+        yield (cur.year, cur.month, cur.day, cur.hour), (sl - cur).total_seconds()
+        cur = sl
+
+
+def distribute_interval(start, end, sid, hours, sessions):
+    for key, sec in _split_by_hour(start, end):
         hours[key] += sec
         sessions[key][sid] += sec
-        cur = sl
+
+
+def build_project_hours(events, gap_limit):
+    """Exact per-project wall-clock seconds per hour.
+
+    Each project's own event sub-stream is tiled with the same gap rule as the
+    global stream. Consecutive intervals of one sub-stream never overlap, so a
+    project's seconds in an hour are a true union of its activity: two agents
+    working the same project side by side (Claude + Codex) count once, and no
+    project can exceed 3600 s in an hour. This is what the project filter
+    shows — summing per-session durations would double-count the overlap.
+    Returns {(y, m, d, h): {project: seconds}}."""
+    by_proj = defaultdict(list)
+    for ev in events:                       # events are globally sorted
+        proj = ev[3] if len(ev) > 3 and ev[3] else "unknown"
+        by_proj[proj].append(ev[0])
+    out = defaultdict(lambda: defaultdict(float))
+    for proj, tss in by_proj.items():
+        for i in range(1, len(tss)):
+            if tss[i] - tss[i - 1] <= gap_limit:
+                for key, sec in _split_by_hour(tss[i - 1], tss[i]):
+                    out[key][proj] += sec
+    return out
 
 
 def build_buckets(events, gap_limit, cache_read_weight):
@@ -830,21 +857,36 @@ def build_buckets(events, gap_limit, cache_read_weight):
             for f in ("input", "output", "cache_read", "cache_create"):
                 mb[f] += tok[f]
                 pmb[f] += tok[f]
-    return hour_b, session_b, daily_tokens, daily_models, daily_proj_tokens, daily_proj_models
+    proj_hour_b = build_project_hours(events, gap_limit)
+    return (hour_b, session_b, daily_tokens, daily_models,
+            daily_proj_tokens, daily_proj_models, proj_hour_b)
 
 
 def shape_output(hour_b, session_b, daily_tokens, daily_models, session_meta,
-                 daily_proj_tokens=None, daily_proj_models=None):
+                 daily_proj_tokens=None, daily_proj_models=None, proj_hour_b=None):
     daily_proj_tokens = daily_proj_tokens or {}
     daily_proj_models = daily_proj_models or {}
+    proj_hour_b = proj_hour_b or {}
     months = defaultdict(lambda: defaultdict(lambda: {
         "hours": {}, "sessions": {}, "total": 0, "tokens": None, "models": None,
-        "proj_tokens": None, "proj_models": None,
+        "proj_tokens": None, "proj_models": None, "proj_hours": None,
     }))
     for (y, m, d, h), sec in hour_b.items():
         if sec <= 0:
             continue
         months[f"{y:04d}-{m:02d}"][f"{d:02d}"]["hours"][str(h)] = round(sec)
+
+    # Per-project wall-clock per hour (see build_project_hours). Stored beside
+    # `hours` so the client-side project filter reads an exact figure instead
+    # of summing overlapping session items.
+    for (y, m, d, h), pmap in proj_hour_b.items():
+        row = {p: round(sec) for p, sec in pmap.items() if sec >= 1}
+        if not row:
+            continue
+        day = months[f"{y:04d}-{m:02d}"][f"{d:02d}"]
+        if day["proj_hours"] is None:
+            day["proj_hours"] = {}
+        day["proj_hours"][str(h)] = row
 
     for (y, m, d, h), sid_map in session_b.items():
         # Keep one item per session id. The `sid` is the stable merge key across
@@ -974,6 +1016,19 @@ def merge_proj_tokens(a, b):
             for p in set(a or {}) | set(b or {})}
 
 
+def merge_proj_hours(a, b):
+    """Per-hour, per-project wall-clock seconds — pruning-safe max, like
+    merge_hour_dicts. None when neither side has data (legacy days)."""
+    if not a and not b:
+        return None
+    out = {}
+    for hk in set(a or {}) | set(b or {}):
+        av = (a or {}).get(hk) or {}
+        bv = (b or {}).get(hk) or {}
+        out[hk] = {p: max(av.get(p, 0), bv.get(p, 0)) for p in set(av) | set(bv)}
+    return out
+
+
 def merge_proj_models(a, b):
     """Per-project, per-model token split — merge_models per project."""
     if not a and not b:
@@ -1018,6 +1073,16 @@ def apply_project_renames(months, renames):
                     t = renames.get(pname, pname)
                     out[t] = out.get(t, 0) + v
                 day["proj_tokens"] = out
+            ph = day.get("proj_hours")
+            if ph:
+                for hk, row in ph.items():
+                    if not row or not any(p in renames for p in row):
+                        continue
+                    out = {}
+                    for pname, sec in row.items():
+                        t = renames.get(pname, pname)
+                        out[t] = min(3600, out.get(t, 0) + sec)
+                    ph[hk] = out
             pm = day.get("proj_models")
             if pm and any(p in renames for p in pm):
                 out = {}
@@ -1045,6 +1110,7 @@ def merge_months(current, history):
                 "models": merge_models(cd.get("models"), hd.get("models")),
                 "proj_tokens": merge_proj_tokens(cd.get("proj_tokens"), hd.get("proj_tokens")),
                 "proj_models": merge_proj_models(cd.get("proj_models"), hd.get("proj_models")),
+                "proj_hours": merge_proj_hours(cd.get("proj_hours"), hd.get("proj_hours")),
                 "total": sum(hours.values()),
             }
             days[dkey] = day
@@ -1370,9 +1436,10 @@ def main():
 
     for src in SOURCES:
         ev = events_by_source[src]
-        hour_b, sess_b, day_tok, day_models, day_proj_tok, day_proj_models = build_buckets(ev, gap_limit, cache_read_weight)
+        (hour_b, sess_b, day_tok, day_models,
+         day_proj_tok, day_proj_models, proj_hour_b) = build_buckets(ev, gap_limit, cache_read_weight)
         current_months = shape_output(hour_b, sess_b, day_tok, day_models, session_meta,
-                                      day_proj_tok, day_proj_models)
+                                      day_proj_tok, day_proj_models, proj_hour_b)
         merged_by_source[src] = merge_months(current_months, history_by_source.get(src, {}))
         run_seconds[src] = sum(hour_b.values())
 

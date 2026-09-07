@@ -1154,17 +1154,31 @@ function getView() {
 }
 
 // ---- project filter ----
-// When a project is selected, a day's hour totals are re-derived from its
-// per-hour session list (summing only the matching project). With no project
-// selected, the precomputed day.hours / day.total are returned unchanged.
+// When a project is selected, a day's hour totals come from day.proj_hours —
+// the exact wall-clock seconds that project was active in each hour, computed
+// server-side as a union of the project's own events. Parallel sessions of one
+// project (Claude + Codex side by side) therefore count once, and an hour can
+// never exceed 3600 s. Legacy days archived before proj_hours existed fall
+// back to summing the project's session items, clamped to the hour's real
+// wall-clock so overlap can't push it past the hour. With no project selected,
+// the precomputed day.hours / day.total are returned unchanged.
 function hoursOf(day) {
   if (!day) return {};
   if (!currentProject) return day.hours || {};
   const out = {};
+  const ph = day.proj_hours || null;
   const sess = day.sessions || {};
-  for (const h in sess) {
-    let s = 0;
-    for (const it of sess[h]) if (it.project === currentProject) s += it.sec;
+  const hrs = day.hours || {};
+  const keys = new Set(Object.keys(ph || {}).concat(Object.keys(sess)));
+  for (const h of keys) {
+    let s;
+    if (ph && ph[h]) {
+      s = ph[h][currentProject] || 0;
+    } else {
+      s = 0;
+      for (const it of (sess[h] || [])) if (it.project === currentProject) s += it.sec;
+      s = Math.min(s, hrs[h] || 3600);
+    }
     if (s > 0) out[h] = Math.round(s);
   }
   return out;
