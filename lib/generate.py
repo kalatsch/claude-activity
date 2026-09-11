@@ -25,8 +25,19 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 # ---------- Defaults & config ----------
+# What `prompt_gap_minutes` falls back to, as a multiple of `gap_minutes`: the
+# operator's clock needs a wider threshold than the activity clock, because the
+# agent's whole answer sits between two of their messages.
+PROMPT_GAP_MULTIPLIER = 2
+
+
 DEFAULTS = {
     "gap_minutes": 10,
+    # Threshold for the "My time" clock, which measures the pauses between the
+    # operator's own messages. Left unset it follows gap_minutes doubled: the
+    # agent's whole answer sits in that pause, plus the time spent reading it
+    # and wording the next task.
+    "prompt_gap_minutes": None,
     # Each interval is [start_hour_inclusive, end_hour_exclusive], 0..23.
     # Multiple intervals are useful for splitting around a lunch break,
     # e.g. [[9, 12], [13, 18]] (no work between 12 and 13).
@@ -50,6 +61,11 @@ def normalize_config(cfg):
     # Always strip the legacy keys to keep the canonical schema clean.
     cfg.pop("work_hour_start", None)
     cfg.pop("work_hour_end", None)
+    gap = cfg.get("gap_minutes") or DEFAULTS["gap_minutes"]
+    pgap = cfg.get("prompt_gap_minutes")
+    if not isinstance(pgap, (int, float)) or isinstance(pgap, bool) or pgap <= 0:
+        pgap = gap * PROMPT_GAP_MULTIPLIER
+    cfg["prompt_gap_minutes"] = int(pgap)
     return cfg
 
 PROJECTS_DIR = Path.home() / ".claude" / "projects"
@@ -369,7 +385,16 @@ def load_config():
         user_cfg = {}
     # Migrate legacy keys on the user config BEFORE merging with DEFAULTS, so
     # that the merge doesn't mask the legacy fields with the default array.
+    had_prompt_gap = "prompt_gap_minutes" in user_cfg
     user_cfg = normalize_config(user_cfg)
+    # Write the resolved operator threshold back once, so a setting that is
+    # already in effect is visible and editable rather than implicit. Only
+    # touches a config the user already has; a missing file stays missing.
+    if CONFIG_FILE.exists() and not had_prompt_gap:
+        try:
+            CONFIG_FILE.write_text(json.dumps(user_cfg, indent=2) + "\n")
+        except OSError:
+            pass
     return {**DEFAULTS, **user_cfg}
 
 
@@ -865,8 +890,9 @@ def build_prompt_hours(events, gap_limit):
 
     The agent's own traffic is ignored entirely: what is measured is the
     operator's presence, from one message of theirs to the next, dropping any
-    pause longer than the gap threshold. Stretches that ran without them —
-    scheduled jobs, background agents — contribute nothing.
+    pause longer than `gap_limit` (the caller passes the operator's own,
+    wider threshold — see `prompt_gap_minutes`). Stretches that ran
+    without them — scheduled jobs, background agents — contribute nothing.
 
     Returns (hours, proj_hours) shaped like build_buckets' hour map."""
     hours = defaultdict(float)
@@ -884,7 +910,7 @@ def build_prompt_hours(events, gap_limit):
     return hours, proj_hours
 
 
-def build_buckets(events, gap_limit, cache_read_weight):
+def build_buckets(events, gap_limit, cache_read_weight, prompt_gap_limit=None):
     hour_b = defaultdict(float)
     session_b = defaultdict(lambda: defaultdict(float))
     daily_tokens = defaultdict(lambda: {
@@ -929,7 +955,8 @@ def build_buckets(events, gap_limit, cache_read_weight):
                 mb[f] += tok[f]
                 pmb[f] += tok[f]
     proj_hour_b = build_project_hours(events, gap_limit)
-    prompt_hour_b, prompt_proj_hour_b = build_prompt_hours(events, gap_limit)
+    prompt_hour_b, prompt_proj_hour_b = build_prompt_hours(
+        events, prompt_gap_limit or gap_limit)
     return (hour_b, session_b, daily_tokens, daily_models,
             daily_proj_tokens, daily_proj_models, proj_hour_b,
             prompt_hour_b, prompt_proj_hour_b)
@@ -1301,10 +1328,19 @@ def _iter_history_files(history_file):
     return files
 
 
-# Bumped whenever build_prompt_hours changes what it counts. History merges
-# hour buckets by max, so a stored clock computed under an older definition
-# would otherwise outvote the new one forever; a mismatch drops it instead.
-PROMPT_CLOCK_VERSION = 2
+# Identity of the stored operator clock: the rule version, bumped whenever
+# build_prompt_hours changes what it counts, paired at write time with the
+# threshold it ran at. History merges hour buckets by max, so a clock computed
+# under an older rule — or a wider threshold — would otherwise outvote the new
+# one forever; a mismatch drops the stored clock and it is recomputed instead.
+# Safe to drop precisely because prompts survive log pruning in
+# ~/.claude/history.jsonl, so the operator clock can always be rebuilt.
+PROMPT_CLOCK_VERSION = 3
+
+
+# Threshold the current run computes the operator clock at, in minutes. Set
+# once in main() and compared against what history was written with.
+_PROMPT_CLOCK_GAP = [None]
 
 
 def _strip_prompt_clock(months):
@@ -1329,7 +1365,8 @@ def _parse_history_sources(raw):
             out[s] = months
     elif isinstance(raw.get("months"), dict):
         out["claude"] = _strip_alien_session_sources(raw["months"], "claude")
-    if raw.get("prompt_clock") != PROMPT_CLOCK_VERSION:
+    if (raw.get("prompt_clock") != PROMPT_CLOCK_VERSION
+            or raw.get("prompt_clock_gap") != _PROMPT_CLOCK_GAP[0]):
         for months in out.values():
             _strip_prompt_clock(months)
     return out
@@ -1471,12 +1508,14 @@ def _prune_daily_backups(output_dir, keep=14):
             pass
 
 
-def compact_history(output_dir):
+def compact_history(output_dir, prompt_gap_minutes=None):
     """One-off maintenance (`--compact`): rebuild history.json from the
     self-healed merge with duplicate session items collapsed, then move the old
     top-level backups into a `pre-compact-<ts>/` folder so the self-healing
     loader (non-recursive glob) can't resurrect the bloat from them."""
     history_file = output_dir / "history.json"
+    if prompt_gap_minutes is not None:
+        _PROMPT_CLOCK_GAP[0] = int(prompt_gap_minutes)
     by_source = _load_history_sources(history_file)   # self-heals across every backup
     prices = _load_history_prices(history_file)
     renames = _load_history_renames(history_file)
@@ -1497,6 +1536,7 @@ def compact_history(output_dir):
     text = json.dumps({"updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
                        "sources": sources_history, "prices": prices,
                        "prompt_clock": PROMPT_CLOCK_VERSION,
+                       "prompt_clock_gap": _PROMPT_CLOCK_GAP[0],
                        "project_renames": renames},
                       ensure_ascii=False, indent=2)
     stamp = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
@@ -1518,6 +1558,8 @@ def main():
     prune_stale_cache_versions()
     cfg = load_config()
     gap_limit = timedelta(minutes=int(cfg["gap_minutes"]))
+    prompt_gap_limit = timedelta(minutes=int(cfg["prompt_gap_minutes"]))
+    _PROMPT_CLOCK_GAP[0] = int(cfg["prompt_gap_minutes"])
     work_intervals = [
         [int(s), int(e)] for s, e in cfg.get("work_intervals", DEFAULTS["work_intervals"])
     ]
@@ -1531,7 +1573,7 @@ def main():
 
     if "--compact" in sys.argv:
         print("Compacting history ...")
-        compact_history(output_dir)
+        compact_history(output_dir, cfg["prompt_gap_minutes"])
 
     print("Reading JSONL logs ...")
     print(f"  Claude:  {PROJECTS_DIR}")
@@ -1565,7 +1607,8 @@ def main():
         ev = events_by_source[src]
         (hour_b, sess_b, day_tok, day_models,
          day_proj_tok, day_proj_models, proj_hour_b,
-         prompt_hour_b, prompt_proj_hour_b) = build_buckets(ev, gap_limit, cache_read_weight)
+         prompt_hour_b, prompt_proj_hour_b) = build_buckets(
+            ev, gap_limit, cache_read_weight, prompt_gap_limit)
         current_months = shape_output(hour_b, sess_b, day_tok, day_models, session_meta,
                                       day_proj_tok, day_proj_models, proj_hour_b,
                                       prompt_hour_b, prompt_proj_hour_b)
@@ -1581,8 +1624,19 @@ def main():
         merge_months(merged_by_source["both"], merged_by_source["claude"]),
         merged_by_source["codex"])
 
+    # Months whose session logs Claude Code has already pruned: nothing but the
+    # prompt log survives for them, so the activity clock can only report a
+    # lower bound. Recomputed every run, never trusted from history.
+    logged_months = {
+        s: {e[0].strftime("%Y-%m") for e in events_by_source[s]
+            if (e[5] if len(e) > 5 else "") != "prompt"}
+        for s in SOURCES
+    }
+
     for src in SOURCES:
         merged_months = merged_by_source[src]
+        for mkey, mval in merged_months.items():
+            mval["pruned"] = mkey not in logged_months[src]
         total_cost = apply_costs(merged_months, price_book)
         available = sorted(merged_months.keys())
         total_sec_run = run_seconds[src]
@@ -1610,6 +1664,7 @@ def main():
          "sources": sources_history,
          "prices": price_book,
          "prompt_clock": PROMPT_CLOCK_VERSION,
+         "prompt_clock_gap": _PROMPT_CLOCK_GAP[0],
          "project_renames": project_renames},
         ensure_ascii=False, indent=2,
     )
@@ -1634,6 +1689,7 @@ def main():
     payload = {
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "gap_limit_minutes": int(gap_limit.total_seconds() // 60),
+        "prompt_gap_limit_minutes": int(prompt_gap_limit.total_seconds() // 60),
         "work_intervals": work_intervals,
         "work_days": work_days,
         "first_day_of_week": first_day_of_week,

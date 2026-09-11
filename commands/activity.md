@@ -41,7 +41,7 @@ block below verbatim **and stop**. No other text.
                             Aliases: -h, help
 
 Config file:  ~/.claude-activity/config.json
-                gap_minutes, work_intervals, work_days,
+                gap_minutes, prompt_gap_minutes, work_intervals, work_days,
                 first_day_of_week, auto_open, cache_read_weight, output_dir
 Output:       ~/.claude-activity/index.html (the dashboard)
 History:      ~/.claude-activity/history.json (preserves data after Claude
@@ -116,6 +116,7 @@ e.g.:
 ```python
 {
   "gap_minutes": 10,
+  "prompt_gap_minutes": 20,
   "work_intervals": [[9, 18]],
   "work_days": [0, 1, 2, 3, 4],
   "first_day_of_week": 0,
