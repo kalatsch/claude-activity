@@ -1002,6 +1002,17 @@
         Codex <span class="src-h" data-src-h="codex">—</span>
       </button>
     </div>
+    <div class="source-toggle mode-toggle" id="modeToggle" role="tablist" aria-label="Time counted">
+      <span class="src-pill" id="modePill"></span>
+      <button type="button" data-mode="all" role="tab" aria-pressed="true"
+              title="Every logged event counts, including long agent runs you were not present for">
+        All activity <span class="src-h" data-mode-h="all">—</span>
+      </button>
+      <button type="button" data-mode="prompts" role="tab" aria-pressed="false"
+              title="Only the time between the messages you sent, dropping any pause longer than the gap threshold. Agent-only stretches count as nothing.">
+        My time <span class="src-h" data-mode-h="prompts">—</span>
+      </button>
+    </div>
     <div class="proj-select" id="projectSelectWrap">
       <button class="proj-select-trigger" id="projectSelectTrigger" type="button" aria-haspopup="listbox" aria-expanded="false" title="Filter by project">
         <span class="proj-select-value" id="projectSelectValue">All projects</span>
@@ -1104,11 +1115,13 @@ function classifyCell(year, monthIdx, day, hour) {
 
 let DATA = null;
 let currentSource = "both";   // toggled by .source-toggle
+let currentMode = "all";       // "all" | "prompts" — toggled by .mode-toggle
 let currentProject = "";       // "" = all projects; set by #projectSelect
 let currentMonth = null;
 const today = new Date();
 const todayKey = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,"0")}`;
 const STORAGE_SOURCE_KEY = "claude-activity.source";
+const STORAGE_MODE_KEY = "claude-activity.mode";
 const STORAGE_PROJECT_KEY = "claude-activity.project";
 
 // Inline SVG marks. Drawn from primitive shapes — not exact brand logos,
@@ -1149,7 +1162,9 @@ function getView() {
   return {
     months: DATA.sources[currentSource].months || {},
     available_months: DATA.available_months || [],
-    total_seconds: DATA.sources[currentSource].total_seconds || 0,
+    total_seconds: (currentMode === "prompts"
+      ? DATA.sources[currentSource].prompt_total_seconds
+      : DATA.sources[currentSource].total_seconds) || 0,
   };
 }
 
@@ -1164,11 +1179,12 @@ function getView() {
 // the precomputed day.hours / day.total are returned unchanged.
 function hoursOf(day) {
   if (!day) return {};
-  if (!currentProject) return day.hours || {};
+  const prompts = currentMode === "prompts";
+  if (!currentProject) return (prompts ? day.prompt_hours : day.hours) || {};
   const out = {};
-  const ph = day.proj_hours || null;
-  const sess = day.sessions || {};
-  const hrs = day.hours || {};
+  const ph = (prompts ? day.prompt_proj_hours : day.proj_hours) || null;
+  const sess = prompts ? {} : (day.sessions || {});
+  const hrs = (prompts ? day.prompt_hours : day.hours) || {};
   const keys = new Set(Object.keys(ph || {}).concat(Object.keys(sess)));
   for (const h of keys) {
     let s;
@@ -1185,7 +1201,7 @@ function hoursOf(day) {
 }
 function totalOf(day) {
   if (!day) return 0;
-  if (!currentProject) return day.total || 0;
+  if (!currentProject) return (currentMode === "prompts" ? day.prompt_total : day.total) || 0;
   const ho = hoursOf(day);
   let t = 0;
   for (const h in ho) t += ho[h];
@@ -1535,6 +1551,26 @@ function setSource(src) {
   setMonth(currentMonth);
 }
 
+function setMode(mode) {
+  if (mode !== "all" && mode !== "prompts") return;
+  currentMode = mode;
+  try { localStorage.setItem(STORAGE_MODE_KEY, mode); } catch (e) {}
+  document.querySelectorAll("#modeToggle button").forEach(b => {
+    b.setAttribute("aria-pressed", b.dataset.mode === mode ? "true" : "false");
+  });
+  rebuildProjectOptions();
+  renderMonthPicker();
+  setMonth(currentMonth);
+}
+
+function positionModePill() {
+  const pill = document.getElementById("modePill");
+  const btn = document.querySelector('#modeToggle button[aria-pressed="true"]');
+  if (!pill || !btn) return;
+  pill.style.left = btn.offsetLeft + "px";
+  pill.style.width = btn.offsetWidth + "px";
+}
+
 // Slide the active-tab pill under the pressed source button.
 function positionSrcPill() {
   const pill = document.getElementById("srcPill");
@@ -1550,12 +1586,22 @@ function updateToggleLabels() {
   for (const src of ["both", "claude", "codex"]) {
     const months = DATA.sources && DATA.sources[src] && DATA.sources[src].months;
     const m = months && currentMonth ? months[currentMonth] : null;
-    const secs = m ? (m.total || 0) : 0;
+    const secs = m ? ((currentMode === "prompts" ? m.prompt_total : m.total) || 0) : 0;
     const h = Math.round(secs / 3600);
     const el = document.querySelector(`[data-src-h="${src}"]`);
     if (el) el.textContent = h > 0 ? `${h}h` : "—";
   }
+  // Same for the clock-mode toggle: show each mode's total for this month.
+  const months = DATA.sources && DATA.sources[currentSource] && DATA.sources[currentSource].months;
+  const mm = months && currentMonth ? months[currentMonth] : null;
+  for (const mode of ["all", "prompts"]) {
+    const secs = mm ? ((mode === "prompts" ? mm.prompt_total : mm.total) || 0) : 0;
+    const h = Math.round(secs / 3600);
+    const el = document.querySelector(`[data-mode-h="${mode}"]`);
+    if (el) el.textContent = h > 0 ? `${h}h` : "—";
+  }
   positionSrcPill();  // button widths change with the labels above
+  positionModePill();
 }
 
 function initSourceToggle() {
@@ -1566,6 +1612,9 @@ function initSourceToggle() {
   });
   document.querySelectorAll("#sourceToggle button").forEach(b => {
     b.addEventListener("click", () => setSource(b.dataset.source));
+  });
+  document.querySelectorAll("#modeToggle button").forEach(b => {
+    b.addEventListener("click", () => setMode(b.dataset.mode));
   });
   const pclear = document.getElementById("projectSelectClear");
   if (pclear) pclear.addEventListener("click", (e) => {
@@ -2066,6 +2115,11 @@ if (!window.CLAUDE_ACTIVITY_DATA) {
   try {
     const stored = localStorage.getItem(STORAGE_SOURCE_KEY);
     if (stored && DATA.sources && DATA.sources[stored]) initialSource = stored;
+    const storedMode = localStorage.getItem(STORAGE_MODE_KEY);
+    if (storedMode === "all" || storedMode === "prompts") currentMode = storedMode;
+    document.querySelectorAll("#modeToggle button").forEach(b => {
+      b.setAttribute("aria-pressed", b.dataset.mode === currentMode ? "true" : "false");
+    });
   } catch (e) {}
   try {
     const sp = localStorage.getItem(STORAGE_PROJECT_KEY);

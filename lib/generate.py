@@ -488,6 +488,25 @@ def extract_tokens(obj):
     }
 
 
+def is_user_prompt(obj):
+    """True for a record that is a message the human actually typed.
+
+    `type: "user"` alone is not enough: tool results come back as user records
+    too, and so do injected meta records. A real prompt carries text (or an
+    image) the person wrote, has no `toolUseResult`, and is not `isMeta`."""
+    if obj.get("type") != "user":
+        return False
+    if obj.get("toolUseResult") is not None or obj.get("isMeta"):
+        return False
+    content = (obj.get("message") or {}).get("content")
+    if isinstance(content, str):
+        return bool(content.strip())
+    if isinstance(content, list):
+        kinds = {b.get("type") for b in content if isinstance(b, dict)}
+        return bool(kinds & {"text", "image"}) and "tool_result" not in kinds
+    return False
+
+
 def collect_claude():
     """Read ~/.claude/projects JSONL → list of events tagged source='claude'.
 
@@ -572,7 +591,13 @@ def collect_claude():
                         if obj.get("cwd")
                         else file_proj or "unknown"
                     )
-                    events.append((ts, extract_tokens(obj), sid, proj, "claude"))
+                    if is_user_prompt(obj):
+                        kind = "prompt"
+                    elif obj.get("type") == "assistant":
+                        kind = "reply"
+                    else:
+                        kind = ""     # tool traffic, system records, attachments
+                    events.append((ts, extract_tokens(obj), sid, proj, "claude", kind))
         except OSError:
             continue
     events.sort(key=lambda e: e[0])
@@ -617,7 +642,7 @@ def collect_prompt_history():
         except (OverflowError, OSError, ValueError):
             continue
         proj = project_name_from_cwd(cwd)
-        events.append((ts, None, sid, proj, "claude"))
+        events.append((ts, None, sid, proj, "claude", "prompt"))
         disp = obj.get("display")
         title = disp.strip() if isinstance(disp, str) else ""
         if title.startswith("/"):      # slash command — not descriptive
@@ -725,11 +750,22 @@ def collect_codex():
                 continue
             if not isinstance(obj, dict):
                 continue
-            if obj.get("type") != "event_msg":
-                continue
             payload = obj.get("payload") or {}
             ptype = payload.get("type")
-            if ptype not in ("user_message", "agent_message", "token_count"):
+            otype = obj.get("type")
+            # Older rollouts carry the turn as `event_msg/user_message` and
+            # `event_msg/agent_message`; newer ones as `response_item/message`
+            # with a role.
+            role = payload.get("role")
+            if (otype == "event_msg" and ptype == "user_message") or (
+                    otype == "response_item" and ptype == "message" and role == "user"):
+                kind = "prompt"
+            elif (otype == "event_msg" and ptype == "agent_message") or (
+                    otype == "response_item" and ptype == "message" and role == "assistant"):
+                kind = "reply"
+            elif otype == "event_msg" and ptype == "token_count":
+                kind = ""
+            else:
                 continue
             ts_str = obj.get("timestamp")
             if not ts_str:
@@ -740,7 +776,7 @@ def collect_codex():
                 continue
             tokens = (_codex_tokens_from_event(payload, normalize_model(file_model))
                       if ptype == "token_count" else None)
-            events.append((ts, tokens, file_sid or "", file_proj, "codex"))
+            events.append((ts, tokens, file_sid or "", file_proj, "codex", kind))
 
     events.sort(key=lambda e: e[0])
     return events, session_meta
@@ -813,6 +849,41 @@ def build_project_hours(events, gap_limit):
     return out
 
 
+def _tile_gaps(timestamps, gap_limit, out):
+    """Add the time between consecutive timestamps to `out`, skipping any pause
+    longer than the gap threshold."""
+    ts = sorted(timestamps)
+    for i in range(1, len(ts)):
+        if ts[i] - ts[i - 1] <= gap_limit:
+            for key, sec in _split_by_hour(ts[i - 1], ts[i]):
+                out[key] += sec
+
+
+def build_prompt_hours(events, gap_limit):
+    """Seconds per hour, overall and per project, counting only the pauses
+    between messages the person sent.
+
+    The agent's own traffic is ignored entirely: what is measured is the
+    operator's presence, from one message of theirs to the next, dropping any
+    pause longer than the gap threshold. Stretches that ran without them —
+    scheduled jobs, background agents — contribute nothing.
+
+    Returns (hours, proj_hours) shaped like build_buckets' hour map."""
+    hours = defaultdict(float)
+    proj_hours = defaultdict(lambda: defaultdict(float))
+    prompts = [e for e in events if (e[5] if len(e) > 5 else "") == "prompt"]
+    _tile_gaps([e[0] for e in prompts], gap_limit, hours)
+    by_proj = defaultdict(list)
+    for e in prompts:
+        by_proj[e[3] if len(e) > 3 and e[3] else "unknown"].append(e[0])
+    for proj, tss in by_proj.items():
+        one = defaultdict(float)
+        _tile_gaps(tss, gap_limit, one)
+        for key, sec in one.items():
+            proj_hours[key][proj] += sec
+    return hours, proj_hours
+
+
 def build_buckets(events, gap_limit, cache_read_weight):
     hour_b = defaultdict(float)
     session_b = defaultdict(lambda: defaultdict(float))
@@ -858,18 +929,24 @@ def build_buckets(events, gap_limit, cache_read_weight):
                 mb[f] += tok[f]
                 pmb[f] += tok[f]
     proj_hour_b = build_project_hours(events, gap_limit)
+    prompt_hour_b, prompt_proj_hour_b = build_prompt_hours(events, gap_limit)
     return (hour_b, session_b, daily_tokens, daily_models,
-            daily_proj_tokens, daily_proj_models, proj_hour_b)
+            daily_proj_tokens, daily_proj_models, proj_hour_b,
+            prompt_hour_b, prompt_proj_hour_b)
 
 
 def shape_output(hour_b, session_b, daily_tokens, daily_models, session_meta,
-                 daily_proj_tokens=None, daily_proj_models=None, proj_hour_b=None):
+                 daily_proj_tokens=None, daily_proj_models=None, proj_hour_b=None,
+                 prompt_hour_b=None, prompt_proj_hour_b=None):
     daily_proj_tokens = daily_proj_tokens or {}
     daily_proj_models = daily_proj_models or {}
     proj_hour_b = proj_hour_b or {}
+    prompt_hour_b = prompt_hour_b or {}
+    prompt_proj_hour_b = prompt_proj_hour_b or {}
     months = defaultdict(lambda: defaultdict(lambda: {
         "hours": {}, "sessions": {}, "total": 0, "tokens": None, "models": None,
         "proj_tokens": None, "proj_models": None, "proj_hours": None,
+        "prompt_hours": None, "prompt_proj_hours": None,
     }))
     for (y, m, d, h), sec in hour_b.items():
         if sec <= 0:
@@ -887,6 +964,25 @@ def shape_output(hour_b, session_b, daily_tokens, daily_models, session_meta,
         if day["proj_hours"] is None:
             day["proj_hours"] = {}
         day["proj_hours"][str(h)] = row
+
+    # Prompt-paced clock (see build_prompt_hours), stored beside the activity
+    # clock so the dashboard can switch between them without a second dataset.
+    for (y, m, d, h), sec in prompt_hour_b.items():
+        if sec < 1:
+            continue
+        day = months[f"{y:04d}-{m:02d}"][f"{d:02d}"]
+        if day["prompt_hours"] is None:
+            day["prompt_hours"] = {}
+        day["prompt_hours"][str(h)] = round(sec)
+
+    for (y, m, d, h), pmap in prompt_proj_hour_b.items():
+        row = {pr: round(sec) for pr, sec in pmap.items() if sec >= 1}
+        if not row:
+            continue
+        day = months[f"{y:04d}-{m:02d}"][f"{d:02d}"]
+        if day["prompt_proj_hours"] is None:
+            day["prompt_proj_hours"] = {}
+        day["prompt_proj_hours"][str(h)] = row
 
     for (y, m, d, h), sid_map in session_b.items():
         # Keep one item per session id. The `sid` is the stable merge key across
@@ -931,10 +1027,12 @@ def shape_output(hour_b, session_b, daily_tokens, daily_models, session_meta,
         out_days = {}
         for dkey, day in days.items():
             day["total"] = sum(day["hours"].values())
+            day["prompt_total"] = sum((day.get("prompt_hours") or {}).values())
             out_days[dkey] = day
         out[mkey] = {
             "days": out_days,
             "total": sum(d["total"] for d in out_days.values()),
+            "prompt_total": sum(d.get("prompt_total", 0) for d in out_days.values()),
             "tokens_total": sum(
                 d["tokens"]["all"] for d in out_days.values() if d.get("tokens")
             ),
@@ -1073,8 +1171,10 @@ def apply_project_renames(months, renames):
                     t = renames.get(pname, pname)
                     out[t] = out.get(t, 0) + v
                 day["proj_tokens"] = out
-            ph = day.get("proj_hours")
-            if ph:
+            for hours_key in ("proj_hours", "prompt_proj_hours"):
+                ph = day.get(hours_key)
+                if not ph:
+                    continue
                 for hk, row in ph.items():
                     if not row or not any(p in renames for p in row):
                         continue
@@ -1103,6 +1203,8 @@ def merge_months(current, history):
             cd = c_days.get(dkey, {})
             hd = h_days.get(dkey, {})
             hours = merge_hour_dicts(cd.get("hours", {}), hd.get("hours", {}))
+            prompt_hours = merge_hour_dicts(cd.get("prompt_hours") or {},
+                                            hd.get("prompt_hours") or {})
             day = {
                 "hours": hours,
                 "sessions": merge_sessions(cd.get("sessions", {}), hd.get("sessions", {})),
@@ -1111,12 +1213,17 @@ def merge_months(current, history):
                 "proj_tokens": merge_proj_tokens(cd.get("proj_tokens"), hd.get("proj_tokens")),
                 "proj_models": merge_proj_models(cd.get("proj_models"), hd.get("proj_models")),
                 "proj_hours": merge_proj_hours(cd.get("proj_hours"), hd.get("proj_hours")),
+                "prompt_hours": prompt_hours or None,
+                "prompt_proj_hours": merge_proj_hours(cd.get("prompt_proj_hours"),
+                                                      hd.get("prompt_proj_hours")),
                 "total": sum(hours.values()),
+                "prompt_total": sum(prompt_hours.values()),
             }
             days[dkey] = day
         merged[mkey] = {
             "days": days,
             "total": sum(d["total"] for d in days.values()),
+            "prompt_total": sum(d.get("prompt_total", 0) for d in days.values()),
             "tokens_total": sum(
                 d["tokens"]["all"] for d in days.values()
                 if d.get("tokens") and "all" in d["tokens"]
@@ -1194,6 +1301,22 @@ def _iter_history_files(history_file):
     return files
 
 
+# Bumped whenever build_prompt_hours changes what it counts. History merges
+# hour buckets by max, so a stored clock computed under an older definition
+# would otherwise outvote the new one forever; a mismatch drops it instead.
+PROMPT_CLOCK_VERSION = 2
+
+
+def _strip_prompt_clock(months):
+    """Remove a prompt clock computed under a superseded rule."""
+    for mval in months.values():
+        for day in (mval.get("days") or {}).values():
+            day.pop("prompt_hours", None)
+            day.pop("prompt_proj_hours", None)
+            day.pop("prompt_total", None)
+    return months
+
+
 def _parse_history_sources(raw):
     """One file's raw JSON → {source: months_dict}, handling the legacy
     single-source schema and stripping alien-source session items."""
@@ -1206,6 +1329,9 @@ def _parse_history_sources(raw):
             out[s] = months
     elif isinstance(raw.get("months"), dict):
         out["claude"] = _strip_alien_session_sources(raw["months"], "claude")
+    if raw.get("prompt_clock") != PROMPT_CLOCK_VERSION:
+        for months in out.values():
+            _strip_prompt_clock(months)
     return out
 
 
@@ -1370,6 +1496,7 @@ def compact_history(output_dir):
     sources_history = {s: {"months": by_source.get(s, {})} for s in SOURCES}
     text = json.dumps({"updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
                        "sources": sources_history, "prices": prices,
+                       "prompt_clock": PROMPT_CLOCK_VERSION,
                        "project_renames": renames},
                       ensure_ascii=False, indent=2)
     stamp = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
@@ -1437,9 +1564,11 @@ def main():
     for src in SOURCES:
         ev = events_by_source[src]
         (hour_b, sess_b, day_tok, day_models,
-         day_proj_tok, day_proj_models, proj_hour_b) = build_buckets(ev, gap_limit, cache_read_weight)
+         day_proj_tok, day_proj_models, proj_hour_b,
+         prompt_hour_b, prompt_proj_hour_b) = build_buckets(ev, gap_limit, cache_read_weight)
         current_months = shape_output(hour_b, sess_b, day_tok, day_models, session_meta,
-                                      day_proj_tok, day_proj_models, proj_hour_b)
+                                      day_proj_tok, day_proj_models, proj_hour_b,
+                                      prompt_hour_b, prompt_proj_hour_b)
         merged_by_source[src] = merge_months(current_months, history_by_source.get(src, {}))
         run_seconds[src] = sum(hour_b.values())
 
@@ -1463,6 +1592,8 @@ def main():
             "available_months": available,
             "months": merged_months,
             "total_seconds": total_sec_merged,
+            "prompt_total_seconds": sum(m.get("prompt_total", 0)
+                                        for m in merged_months.values()),
             "total_tokens": total_tokens,
             "total_cost": total_cost,
             "events_count": len(events_by_source[src]),
@@ -1478,6 +1609,7 @@ def main():
         {"updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
          "sources": sources_history,
          "prices": price_book,
+         "prompt_clock": PROMPT_CLOCK_VERSION,
          "project_renames": project_renames},
         ensure_ascii=False, indent=2,
     )
