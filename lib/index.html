@@ -1216,7 +1216,10 @@ function monthUnmeasured(mkey) {
   if (currentMode !== "prompts") return false;
   const months = DATA.sources && DATA.sources[currentSource] && DATA.sources[currentSource].months;
   const m = months ? months[mkey || currentMonth] : null;
-  return !!(m && m.pruned);
+  if (!m) return false;
+  // A project can have lost its logs inside a month that kept everyone else's.
+  if (currentProject) return (m.pruned_projects || []).includes(currentProject);
+  return !!m.pruned;
 }
 
 function hoursOf(day) {
@@ -1629,8 +1632,9 @@ function updateToggleLabels() {
   for (const src of ["both", "claude", "codex"]) {
     const months = DATA.sources && DATA.sources[src] && DATA.sources[src].months;
     const m = months && currentMonth ? months[currentMonth] : null;
-    const secs = m && !(currentMode === "prompts" && m.pruned)
-      ? ((currentMode === "prompts" ? m.prompt_total : m.total) || 0) : 0;
+    const dead = currentMode === "prompts" && !!m && (currentProject
+      ? (m.pruned_projects || []).includes(currentProject) : !!m.pruned);
+    const secs = m && !dead ? ((currentMode === "prompts" ? m.prompt_total : m.total) || 0) : 0;
     const h = Math.round(secs / 3600);
     const el = document.querySelector(`[data-src-h="${src}"]`);
     if (el) el.textContent = h > 0 ? `${h}h` : "—";
@@ -1639,7 +1643,8 @@ function updateToggleLabels() {
   const months = DATA.sources && DATA.sources[currentSource] && DATA.sources[currentSource].months;
   const mm = months && currentMonth ? months[currentMonth] : null;
   for (const mode of ["all", "prompts"]) {
-    const unmeasured = mode === "prompts" && !!(mm && mm.pruned);
+    const unmeasured = mode === "prompts" && !!mm && (currentProject
+      ? (mm.pruned_projects || []).includes(currentProject) : !!mm.pruned);
     const secs = mm && !unmeasured ? ((mode === "prompts" ? mm.prompt_total : mm.total) || 0) : 0;
     const h = Math.round(secs / 3600);
     const el = document.querySelector(`[data-mode-h="${mode}"]`);
@@ -1876,10 +1881,10 @@ function renderGrid() {
     document.getElementById("grid").innerHTML =
       `<div class="grid-empty">
          <div class="ge-icon">⌛</div>
-         <h3>Nothing to measure for this month</h3>
-         <p>Claude Code has pruned this month's session logs, so the only trace left is
-            your prompt log. That is enough for <b>All activity</b> to report a lower
-            bound, but not enough to measure the time you spent — switch to
+         <h3>${currentProject ? `Nothing to measure for ${escapeHtml(currentProject)} this month` : "Nothing to measure for this month"}</h3>
+         <p>Claude Code has pruned the session logs ${currentProject ? "for this project" : "for this month"}, so the only
+            trace left is your prompt log. That is enough for <b>All activity</b> to report a
+            lower bound, but not enough to measure the time you spent — switch to
             <b>All activity</b> to see what survives.</p>
        </div>`;
     return;

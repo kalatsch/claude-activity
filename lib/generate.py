@@ -1220,6 +1220,60 @@ def apply_project_renames(months, renames):
     return months
 
 
+def backfill_pruned_project_hours(months, logged_projects):
+    """Restore per-project time for projects whose session logs are gone.
+
+    `proj_hours` is recomputed from the current logs every run, which is exact
+    while those logs exist. Once Claude Code prunes them only the operator's
+    prompts remain, and the recomputation collapses the project to a fraction
+    of the time actually recorded. The session items in history still carry
+    that time, so fall back to them — clamped to the hour's own wall clock,
+    which is what keeps two agents running in parallel from counting twice.
+    """
+    for mkey, mval in months.items():
+        for day in (mval.get("days") or {}).values():
+            sessions = day.get("sessions") or {}
+            if not sessions:
+                continue
+            hours = day.get("hours") or {}
+            for hkey, items in sessions.items():
+                per_proj = defaultdict(int)
+                for item in items or []:
+                    per_proj[item.get("project") or "unknown"] += int(item.get("sec", 0))
+                cap = int(hours.get(hkey) or 3600) or 3600
+                row = dict(((day.get("proj_hours") or {}).get(hkey) or {}))
+                changed = False
+                for proj, sec in per_proj.items():
+                    if (mkey, proj) in logged_projects:
+                        continue        # logs are alive — the exact figure stands
+                    restored = min(sec, cap)
+                    if restored > row.get(proj, 0):
+                        row[proj] = restored
+                        changed = True
+                if changed:
+                    if day.get("proj_hours") is None:
+                        day["proj_hours"] = {}
+                    day["proj_hours"][hkey] = row
+    return months
+
+
+def stamp_pruned_projects(months, logged_projects):
+    """List, per month, the projects with no surviving session logs. Their
+    activity figure is a restored lower bound and their operator clock cannot
+    be measured at all, both of which the dashboard says out loud."""
+    for mkey, mval in months.items():
+        seen = set()
+        for day in (mval.get("days") or {}).values():
+            for items in (day.get("sessions") or {}).values():
+                for item in items or []:
+                    seen.add(item.get("project") or "unknown")
+            for key in ("proj_hours", "prompt_proj_hours"):
+                for row in (day.get(key) or {}).values():
+                    seen.update(row or {})
+        mval["pruned_projects"] = sorted(p for p in seen if (mkey, p) not in logged_projects)
+    return months
+
+
 def merge_months(current, history):
     merged = {}
     for mkey in set(current) | set(history):
@@ -1632,9 +1686,18 @@ def main():
             if (e[5] if len(e) > 5 else "") != "prompt"}
         for s in SOURCES
     }
+    # Same question one level down: a month can keep its logs while one of its
+    # projects has already lost them.
+    logged_projects = {
+        s: {(e[0].strftime("%Y-%m"), (e[3] if len(e) > 3 and e[3] else "unknown"))
+            for e in events_by_source[s] if (e[5] if len(e) > 5 else "") != "prompt"}
+        for s in SOURCES
+    }
 
     for src in SOURCES:
         merged_months = merged_by_source[src]
+        backfill_pruned_project_hours(merged_months, logged_projects[src])
+        stamp_pruned_projects(merged_months, logged_projects[src])
         for mkey, mval in merged_months.items():
             mval["pruned"] = mkey not in logged_months[src]
         total_cost = apply_costs(merged_months, price_book)
