@@ -518,11 +518,13 @@ def extract_tokens(obj):
 # transcript as `type: "user"`, and counting them as messages fills the night
 # with "activity" while nobody is at the keyboard. Slash-command records
 # (`<command-name>`, `<command-message>`) are NOT here: the person typed those.
-MACHINE_USER_TAGS = ("<task-notification", "<local-command-stdout")
+MACHINE_USER_TAGS = ("<task-notification", "<local-command-stdout",
+                     "<recommended_plugins", "<user_instructions",
+                     "<environment_context")
 
 
 def _machine_injected(text):
-    return text.lstrip().startswith(MACHINE_USER_TAGS)
+    return bool(text) and text.lstrip().startswith(MACHINE_USER_TAGS)
 
 
 def is_user_prompt(obj):
@@ -709,6 +711,23 @@ def collect_prompt_history():
     return events, session_meta
 
 
+# Codex rollouts name the client that started them. These two are agents
+# driving Codex, not a person at a prompt: the Claude Code rescue plugin and
+# scripted `codex exec` runs. Anything else — the terminal UI, the desktop
+# app, an editor — is treated as the person, so an unfamiliar client is never
+# silently dropped from their clock.
+CODEX_AGENT_ORIGINATORS = {"claude code", "codex_exec"}
+
+
+def _codex_user_text(payload):
+    """The text of a Codex user turn, in either rollout layout."""
+    msg = payload.get("message")
+    if isinstance(msg, str):
+        return msg
+    return " ".join(b.get("text", "") for b in (payload.get("content") or [])
+                    if isinstance(b, dict) and isinstance(b.get("text"), str))
+
+
 def _codex_tokens_from_event(payload, model=None):
     """Codex `event_msg.payload.type=token_count` carries per-turn usage in
     `last_token_usage`. Map onto the same shape as Claude's extract_tokens().
@@ -759,6 +778,7 @@ def collect_codex():
         file_title = ""
         file_model = None
         file_cwd = None
+        file_originator = ""
 
         for line in lines:
             try:
@@ -771,6 +791,7 @@ def collect_codex():
             payload = obj.get("payload") or {}
             if t == "session_meta":
                 file_sid = payload.get("id") or file_sid
+                file_originator = str(payload.get("originator") or "").lower()
                 cwd = payload.get("cwd")
                 if cwd:
                     file_proj = project_name_from_cwd(cwd)
@@ -809,7 +830,12 @@ def collect_codex():
             role = payload.get("role")
             if (otype == "event_msg" and ptype == "user_message") or (
                     otype == "response_item" and ptype == "message" and role == "user"):
-                kind = "prompt"
+                # Still real activity, but only the person's own client and
+                # their own words count towards the operator clock: an
+                # agent-driven run briefs Codex itself, and both layouts carry
+                # injected context blocks as user turns.
+                kind = "" if (file_originator in CODEX_AGENT_ORIGINATORS
+                              or _machine_injected(_codex_user_text(payload))) else "prompt"
             elif (otype == "event_msg" and ptype == "agent_message") or (
                     otype == "response_item" and ptype == "message" and role == "assistant"):
                 kind = "reply"
@@ -1456,7 +1482,7 @@ def _iter_history_files(history_file):
 # one forever; a mismatch drops the stored clock and it is recomputed instead.
 # Safe to drop precisely because prompts survive log pruning in
 # ~/.claude/history.jsonl, so the operator clock can always be rebuilt.
-PROMPT_CLOCK_VERSION = 6
+PROMPT_CLOCK_VERSION = 7
 
 
 # Threshold the current run computes the operator clock at, in minutes. Set
