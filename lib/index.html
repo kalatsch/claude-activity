@@ -989,7 +989,7 @@
         <h3>Settings</h3>
         <ul class="info-settings">
           <li><b>gap_minutes</b><span class="def" id="cfgGap">10</span><br>longest pause still counted as continuous work, for the “All activity” clock.</li>
-          <li><b>prompt_gap_minutes</b><span class="def" id="cfgPromptGap">20</span><br>same thing for the “My time” clock, which measures the pauses between your own messages. Unset it follows <b>gap_minutes</b> doubled, since the agent’s whole answer sits in that pause.</li>
+          <li><b>prompt_gap_minutes</b><span class="def" id="cfgPromptGap">20</span><br>the window the “My time” clock grants each message you sent, centred on it. Unset it follows <b>gap_minutes</b>, so one threshold governs both clocks.</li>
           <li><b>work_intervals</b><span class="def" id="cfgIntervals">[[9, 18]]</span><br>working hours; inside = work (green), outside = off‑hours (yellow). Use two ranges to carve out lunch.</li>
           <li><b>work_days</b><span class="def" id="cfgDays">[0–4]</span><br>work weekdays (0=Mon … 6=Sun); any day not listed renders as weekend (red).</li>
           <li><b>first_day_of_week</b><span class="def" id="cfgFdow">0</span><br>column order of the “by day of week” chart only (0=Mon, 6=Sun).</li>
@@ -1039,7 +1039,7 @@
         All activity <span class="src-h" data-mode-h="all">—</span>
       </button>
       <button type="button" data-mode="prompts" role="tab" aria-pressed="false"
-              title="Only the time between the messages you sent, dropping any pause longer than prompt_gap_minutes — a wider threshold than the activity clock, since the agent's answer sits in between along with the time you spend reading it and wording the next task. Agent-only stretches count as nothing.">
+              title="Every message you sent is worth a window of prompt_gap_minutes centred on it — half before, half after — and overlapping windows fuse, so a run of messages reads as one stretch while a lone message still counts. Agent-only stretches count as nothing.">
         My time <span class="src-h" data-mode-h="prompts">—</span>
       </button>
     </div>
@@ -1229,7 +1229,7 @@ function hoursOf(day) {
   if (!currentProject) return (prompts ? day.prompt_hours : day.hours) || {};
   const out = {};
   const ph = (prompts ? day.prompt_proj_hours : day.proj_hours) || null;
-  const sess = prompts ? {} : (day.sessions || {});
+  const sess = (prompts ? day.prompt_sessions : day.sessions) || {};
   const hrs = (prompts ? day.prompt_hours : day.hours) || {};
   const keys = new Set(Object.keys(ph || {}).concat(Object.keys(sess)));
   for (const h of keys) {
@@ -1978,8 +1978,9 @@ function attachTooltip() {
       // Per-source totals (always claude + codex, independent of current filter)
       const claudeDay = DATA.sources?.claude?.months?.[currentMonth]?.days?.[dkey];
       const codexDay  = DATA.sources?.codex?.months?.[currentMonth]?.days?.[dkey];
-      const claudeSec = (claudeDay && claudeDay.total) || 0;
-      const codexSec  = (codexDay && codexDay.total) || 0;
+      const dayTotal = dd => (dd && (currentMode === "prompts" ? dd.prompt_total : dd.total)) || 0;
+      const claudeSec = dayTotal(claudeDay);
+      const codexSec  = dayTotal(codexDay);
       const sourceSum = claudeSec + codexSec || 1;
 
       // Time-of-day split (work / off / weekend) for the CURRENT source view
@@ -2009,8 +2010,9 @@ function attachTooltip() {
       // doesn't shrink when filtering by Claude/Codex.
       const bothDay = DATA.sources?.both?.months?.[currentMonth]?.days?.[dkey];
       const activeHours = [];
-      if (bothDay && bothDay.hours) {
-        for (const [hkey, sec] of Object.entries(bothDay.hours)) {
+      const bothHours = bothDay && (currentMode === "prompts" ? bothDay.prompt_hours : bothDay.hours);
+      if (bothHours) {
+        for (const [hkey, sec] of Object.entries(bothHours)) {
           if (sec > 0) activeHours.push(Number(hkey));
         }
         activeHours.sort((a, b) => a - b);
@@ -2091,7 +2093,8 @@ function attachTooltip() {
       const wd = WEEKDAY_NAMES_SHORT[date.getDay()];
       const dkey = String(d).padStart(2, "0");
       const day = m && m.days[dkey];
-      let sessions = day && day.sessions ? day.sessions[h] : null;
+      const sessMap = day && (currentMode === "prompts" ? day.prompt_sessions : day.sessions);
+      let sessions = sessMap ? sessMap[h] : null;
       // Respect the project filter, and cap the displayed rows (the stored list
       // is intentionally larger than what we show, so the filter sees everything).
       if (sessions && currentProject) sessions = sessions.filter(it => it.project === currentProject);

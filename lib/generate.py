@@ -25,18 +25,18 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 # ---------- Defaults & config ----------
-# What `prompt_gap_minutes` falls back to, as a multiple of `gap_minutes`: the
-# operator's clock needs a wider threshold than the activity clock, because the
-# agent's whole answer sits between two of their messages.
-PROMPT_GAP_MULTIPLIER = 2
+# What `prompt_gap_minutes` falls back to, as a multiple of `gap_minutes`. The
+# operator's clock spends it as a window centred on each message — half before,
+# half after — so the same threshold that joins two machine events also joins
+# two messages, and one setting covers both clocks.
+PROMPT_GAP_MULTIPLIER = 1
 
 
 DEFAULTS = {
     "gap_minutes": 10,
-    # Threshold for the "My time" clock, which measures the pauses between the
-    # operator's own messages. Left unset it follows gap_minutes doubled: the
-    # agent's whole answer sits in that pause, plus the time spent reading it
-    # and wording the next task.
+    # Window the "My time" clock grants each message the operator sent, centred
+    # on it. Left unset it follows gap_minutes, so one threshold governs both
+    # clocks; raise it to credit more thinking time around every message.
     "prompt_gap_minutes": None,
     # Each interval is [start_hour_inclusive, end_hour_exclusive], 0..23.
     # Multiple intervals are useful for splitting around a lunch break,
@@ -513,22 +513,42 @@ def extract_tokens(obj):
     }
 
 
+# User records the harness writes on the person's behalf. A finished
+# background task and the output of a local command both arrive in the
+# transcript as `type: "user"`, and counting them as messages fills the night
+# with "activity" while nobody is at the keyboard. Slash-command records
+# (`<command-name>`, `<command-message>`) are NOT here: the person typed those.
+MACHINE_USER_TAGS = ("<task-notification", "<local-command-stdout")
+
+
+def _machine_injected(text):
+    return text.lstrip().startswith(MACHINE_USER_TAGS)
+
+
 def is_user_prompt(obj):
     """True for a record that is a message the human actually typed.
 
     `type: "user"` alone is not enough: tool results come back as user records
-    too, and so do injected meta records. A real prompt carries text (or an
-    image) the person wrote, has no `toolUseResult`, and is not `isMeta`."""
+    too, so do injected meta records, and so does every task the agent hands to
+    a subagent. A real prompt carries text (or an image) the person wrote, has
+    no `toolUseResult`, and is neither `isMeta` nor `isSidechain`."""
     if obj.get("type") != "user":
         return False
     if obj.get("toolUseResult") is not None or obj.get("isMeta"):
         return False
+    # A sidechain record is the agent briefing a subagent, not a person typing.
+    if obj.get("isSidechain"):
+        return False
     content = (obj.get("message") or {}).get("content")
     if isinstance(content, str):
-        return bool(content.strip())
+        return bool(content.strip()) and not _machine_injected(content)
     if isinstance(content, list):
         kinds = {b.get("type") for b in content if isinstance(b, dict)}
-        return bool(kinds & {"text", "image"}) and "tool_result" not in kinds
+        if "tool_result" in kinds or not kinds & {"text", "image"}:
+            return False
+        text = " ".join(b.get("text", "") for b in content
+                        if isinstance(b, dict) and b.get("type") == "text")
+        return not _machine_injected(text)
     return False
 
 
@@ -543,6 +563,9 @@ def collect_claude():
         PROJECTS_DIR.glob("*/*/subagents/*.jsonl")
     )
     for jp in files:
+        # Everything in a subagents/ rollout was driven by the agent, never
+        # typed by the person — so nothing in it can be one of their prompts.
+        from_subagent = "subagents" in jp.parts
         try:
             with open(jp) as f:
                 file_sid = file_proj = file_title = file_last = None
@@ -616,7 +639,7 @@ def collect_claude():
                         if obj.get("cwd")
                         else file_proj or "unknown"
                     )
-                    if is_user_prompt(obj):
+                    if is_user_prompt(obj) and not from_subagent:
                         kind = "prompt"
                     elif obj.get("type") == "assistant":
                         kind = "reply"
@@ -666,9 +689,11 @@ def collect_prompt_history():
             ts = datetime.fromtimestamp(ts_raw).astimezone()
         except (OverflowError, OSError, ValueError):
             continue
+        disp = obj.get("display")
+        if isinstance(disp, str) and _machine_injected(disp):
+            continue
         proj = project_name_from_cwd(cwd)
         events.append((ts, None, sid, proj, "claude", "prompt"))
-        disp = obj.get("display")
         title = disp.strip() if isinstance(disp, str) else ""
         if title.startswith("/"):      # slash command — not descriptive
             title = ""
@@ -874,40 +899,62 @@ def build_project_hours(events, gap_limit):
     return out
 
 
-def _tile_gaps(timestamps, gap_limit, out):
-    """Add the time between consecutive timestamps to `out`, skipping any pause
-    longer than the gap threshold."""
-    ts = sorted(timestamps)
-    for i in range(1, len(ts)):
-        if ts[i] - ts[i - 1] <= gap_limit:
-            for key, sec in _split_by_hour(ts[i - 1], ts[i]):
-                out[key] += sec
+def _tile_windows(timestamps, window, out):
+    """Add the union of [t - window/2, t + window/2] over `timestamps` to `out`.
+
+    Every message is worth its own window, so a single message in an otherwise
+    empty hour still registers instead of vanishing, and the last message of a
+    burst keeps its tail. Windows that overlap fuse into one span, which is
+    what makes a run of messages read as continuous time rather than a sum of
+    fragments."""
+    half = window / 2
+    spans = []
+    for ts in sorted(timestamps):
+        start, end = ts - half, ts + half
+        if spans and start <= spans[-1][1]:
+            spans[-1][1] = max(spans[-1][1], end)
+        else:
+            spans.append([start, end])
+    for start, end in spans:
+        for key, sec in _split_by_hour(start, end):
+            out[key] += sec
 
 
 def build_prompt_hours(events, gap_limit):
-    """Seconds per hour, overall and per project, counting only the pauses
-    between messages the person sent.
+    """Seconds per hour, overall and per project, from the messages the person
+    sent — each worth a window of `gap_limit` centred on it (see
+    _tile_windows), with overlapping windows fused.
 
     The agent's own traffic is ignored entirely: what is measured is the
-    operator's presence, from one message of theirs to the next, dropping any
-    pause longer than `gap_limit` (the caller passes the operator's own,
-    wider threshold — see `prompt_gap_minutes`). Stretches that ran
-    without them — scheduled jobs, background agents — contribute nothing.
+    operator's presence. Two messages closer together than the threshold read
+    as one continuous stretch; further apart, each keeps its own window and the
+    empty time between them is not counted. Stretches that ran without the
+    person — scheduled jobs, background agents — contribute nothing.
 
-    Returns (hours, proj_hours) shaped like build_buckets' hour map."""
+    Returns (hours, proj_hours, sessions), shaped like build_buckets' hour and
+    session maps."""
     hours = defaultdict(float)
     proj_hours = defaultdict(lambda: defaultdict(float))
+    sessions = defaultdict(lambda: defaultdict(float))
     prompts = [e for e in events if (e[5] if len(e) > 5 else "") == "prompt"]
-    _tile_gaps([e[0] for e in prompts], gap_limit, hours)
-    by_proj = defaultdict(list)
+    _tile_windows([e[0] for e in prompts], gap_limit, hours)
+    by_proj, by_sid = defaultdict(list), defaultdict(list)
     for e in prompts:
         by_proj[e[3] if len(e) > 3 and e[3] else "unknown"].append(e[0])
+        by_sid[e[2] if len(e) > 2 and e[2] else ""].append(e[0])
     for proj, tss in by_proj.items():
         one = defaultdict(float)
-        _tile_gaps(tss, gap_limit, one)
+        _tile_windows(tss, gap_limit, one)
         for key, sec in one.items():
             proj_hours[key][proj] += sec
-    return hours, proj_hours
+    # Same windows per session, so the hour tooltip can break the operator's
+    # time down the way it breaks down activity.
+    for sid, tss in by_sid.items():
+        one = defaultdict(float)
+        _tile_windows(tss, gap_limit, one)
+        for key, sec in one.items():
+            sessions[key][sid] += sec
+    return hours, proj_hours, sessions
 
 
 def build_buckets(events, gap_limit, cache_read_weight, prompt_gap_limit=None):
@@ -955,25 +1002,48 @@ def build_buckets(events, gap_limit, cache_read_weight, prompt_gap_limit=None):
                 mb[f] += tok[f]
                 pmb[f] += tok[f]
     proj_hour_b = build_project_hours(events, gap_limit)
-    prompt_hour_b, prompt_proj_hour_b = build_prompt_hours(
+    prompt_hour_b, prompt_proj_hour_b, prompt_session_b = build_prompt_hours(
         events, prompt_gap_limit or gap_limit)
     return (hour_b, session_b, daily_tokens, daily_models,
             daily_proj_tokens, daily_proj_models, proj_hour_b,
-            prompt_hour_b, prompt_proj_hour_b)
+            prompt_hour_b, prompt_proj_hour_b, prompt_session_b)
+
+
+def _session_items(sid_map, session_meta):
+    """One item per session id, richest first, capped. The `sid` is the stable
+    merge key across runs — the title is NOT (it drifts as the last prompt /
+    ai-title changes), so keying by title used to create duplicate items that
+    inflated the per-project time filter. See merge_sessions."""
+    items = []
+    for sid, sec in sid_map.items():
+        if sec < 1:
+            continue
+        meta = session_meta.get(sid, {})
+        items.append({
+            "sid": sid,
+            "project": meta.get("project", "unknown"),
+            "title": meta.get("title", ""),
+            "source": meta.get("source", ""),
+            "sec": round(sec),
+        })
+    items.sort(key=lambda x: -x["sec"])
+    return items[:MAX_SESSIONS_PER_HOUR]
 
 
 def shape_output(hour_b, session_b, daily_tokens, daily_models, session_meta,
                  daily_proj_tokens=None, daily_proj_models=None, proj_hour_b=None,
-                 prompt_hour_b=None, prompt_proj_hour_b=None):
+                 prompt_hour_b=None, prompt_proj_hour_b=None,
+                 prompt_session_b=None):
     daily_proj_tokens = daily_proj_tokens or {}
     daily_proj_models = daily_proj_models or {}
     proj_hour_b = proj_hour_b or {}
     prompt_hour_b = prompt_hour_b or {}
     prompt_proj_hour_b = prompt_proj_hour_b or {}
+    prompt_session_b = prompt_session_b or {}
     months = defaultdict(lambda: defaultdict(lambda: {
         "hours": {}, "sessions": {}, "total": 0, "tokens": None, "models": None,
         "proj_tokens": None, "proj_models": None, "proj_hours": None,
-        "prompt_hours": None, "prompt_proj_hours": None,
+        "prompt_hours": None, "prompt_proj_hours": None, "prompt_sessions": {},
     }))
     for (y, m, d, h), sec in hour_b.items():
         if sec <= 0:
@@ -1016,21 +1086,14 @@ def shape_output(hour_b, session_b, daily_tokens, daily_models, session_meta,
         # runs — the title is NOT (it drifts as the last prompt / ai-title
         # changes), so keying by title used to create duplicate items that
         # inflated the per-project time filter. See merge_sessions.
-        items = []
-        for sid, sec in sid_map.items():
-            if sec < 1:
-                continue
-            meta = session_meta.get(sid, {})
-            items.append({
-                "sid": sid,
-                "project": meta.get("project", "unknown"),
-                "title": meta.get("title", ""),
-                "source": meta.get("source", ""),
-                "sec": round(sec),
-            })
-        items.sort(key=lambda x: -x["sec"])
+        items = _session_items(sid_map, session_meta)
         if items:
-            months[f"{y:04d}-{m:02d}"][f"{d:02d}"]["sessions"][str(h)] = items[:MAX_SESSIONS_PER_HOUR]
+            months[f"{y:04d}-{m:02d}"][f"{d:02d}"]["sessions"][str(h)] = items
+
+    for (y, m, d, h), sid_map in prompt_session_b.items():
+        items = _session_items(sid_map, session_meta)
+        if items:
+            months[f"{y:04d}-{m:02d}"][f"{d:02d}"]["prompt_sessions"][str(h)] = items
 
     for (y, m, d), tk in daily_tokens.items():
         months[f"{y:04d}-{m:02d}"][f"{d:02d}"]["tokens"] = tk
@@ -1186,11 +1249,12 @@ def apply_project_renames(months, renames):
         return months
     for mval in months.values():
         for day in (mval.get("days") or {}).values():
-            for items in (day.get("sessions") or {}).values():
-                for it in items or []:
-                    proj = it.get("project")
-                    if proj in renames:
-                        it["project"] = renames[proj]
+            for _key in ("sessions", "prompt_sessions"):
+                for items in (day.get(_key) or {}).values():
+                    for it in items or []:
+                        proj = it.get("project")
+                        if proj in renames:
+                            it["project"] = renames[proj]
             pt = day.get("proj_tokens")
             if pt and any(p in renames for p in pt):
                 out = {}
@@ -1289,6 +1353,8 @@ def merge_months(current, history):
             day = {
                 "hours": hours,
                 "sessions": merge_sessions(cd.get("sessions", {}), hd.get("sessions", {})),
+                "prompt_sessions": merge_sessions(cd.get("prompt_sessions", {}),
+                                                  hd.get("prompt_sessions", {})),
                 "tokens": merge_tokens(cd.get("tokens"), hd.get("tokens")),
                 "models": merge_models(cd.get("models"), hd.get("models")),
                 "proj_tokens": merge_proj_tokens(cd.get("proj_tokens"), hd.get("proj_tokens")),
@@ -1343,7 +1409,8 @@ def _strip_alien_session_sources(months, expected_source):
     so the next history write is clean."""
     for mval in months.values():
         for dval in (mval.get("days") or {}).values():
-            sessions = dval.get("sessions") or {}
+          for _key in ("sessions", "prompt_sessions"):
+            sessions = dval.get(_key) or {}
             for hkey in list(sessions.keys()):
                 items = sessions[hkey] or []
                 filtered = [
@@ -1389,7 +1456,7 @@ def _iter_history_files(history_file):
 # one forever; a mismatch drops the stored clock and it is recomputed instead.
 # Safe to drop precisely because prompts survive log pruning in
 # ~/.claude/history.jsonl, so the operator clock can always be rebuilt.
-PROMPT_CLOCK_VERSION = 3
+PROMPT_CLOCK_VERSION = 6
 
 
 # Threshold the current run computes the operator clock at, in minutes. Set
@@ -1403,6 +1470,7 @@ def _strip_prompt_clock(months):
         for day in (mval.get("days") or {}).values():
             day.pop("prompt_hours", None)
             day.pop("prompt_proj_hours", None)
+            day.pop("prompt_sessions", None)
             day.pop("prompt_total", None)
     return months
 
@@ -1661,11 +1729,11 @@ def main():
         ev = events_by_source[src]
         (hour_b, sess_b, day_tok, day_models,
          day_proj_tok, day_proj_models, proj_hour_b,
-         prompt_hour_b, prompt_proj_hour_b) = build_buckets(
+         prompt_hour_b, prompt_proj_hour_b, prompt_sess_b) = build_buckets(
             ev, gap_limit, cache_read_weight, prompt_gap_limit)
         current_months = shape_output(hour_b, sess_b, day_tok, day_models, session_meta,
                                       day_proj_tok, day_proj_models, proj_hour_b,
-                                      prompt_hour_b, prompt_proj_hour_b)
+                                      prompt_hour_b, prompt_proj_hour_b, prompt_sess_b)
         merged_by_source[src] = merge_months(current_months, history_by_source.get(src, {}))
         run_seconds[src] = sum(hour_b.values())
 
