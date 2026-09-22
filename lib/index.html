@@ -222,6 +222,21 @@
     font-size: 12px;
     padding: 2px 0 8px 0;
   }
+  /* Edge strips: an hour read top-to-bottom down a cell's sides — the left
+     edge for messages the person sent, the right for the agent's answers. */
+  :root {
+    /* Each side carries the same dots twice, a dark column beside a light one,
+       so a mark stays legible whatever colour the cell underneath happens to
+       be — one of the pair always contrasts. */
+    --mark-dark: color-mix(in srgb, var(--bg) 30%, transparent);
+    --mark-light: color-mix(in srgb, var(--text) 30%, transparent);
+    --mark-w: 3px;        /* mark width  */
+    --mark-h: 4px;        /* mark height: > 2px pitch, so neighbours merge */
+    --mark-out: 1px;      /* outer column, from the left edge */
+    --mark-in: 4px;       /* inner column, from the left edge */
+    --mark-out-r: 1px;    /* the right pair mirrors the left exactly: flush */
+    --mark-in-r: 4px;     /* against the edge is what the 5px corner clips */
+  }
   .grid-empty {
     flex: 1 1 auto;
     width: 100%;
@@ -1875,6 +1890,57 @@ function runCountUps() {
   });
 }
 
+// Two vertical strips painted as background layers, so a cell stays a single
+// DOM node: each five-minute bucket of the hour is either lit or transparent.
+// How many marks one hour is drawn as — one per five minutes, matching what is
+// stored. Neighbours touch rather than separate, so a burst of messages reads
+// as a solid run down the edge and a sparse hour as scattered marks.
+const MARK_DISPLAY_BUCKETS = 12;
+// Edge marks are off while the look is being settled. The data is still built
+// and stored, so flipping this back on is all that is needed to see them again.
+const MARKS_ENABLED = false;
+
+function marksStyle(day, hour) {
+  if (!MARKS_ENABLED) return "";
+  const pair = day && day.marks ? day.marks[hour] : null;
+  if (!pair) return "";
+  const stored = DATA.mark_buckets || 12;
+  const n = MARK_DISPLAY_BUCKETS;
+  const per = Math.max(1, Math.round(stored / n));
+  const fold = (mask) => {
+    if (per === 1) return mask;
+    let out = 0;
+    for (let i = 0; i < stored; i++) if ((mask >> i) & 1) out |= 1 << Math.min(n - 1, Math.floor(i / per));
+    return out;
+  };
+  // One mark per lit five-minute bucket. The mark is taller than the 2px
+  // bucket pitch, so consecutive buckets overlap and a busy hour reads as one
+  // continuous line while a sparse hour stays a row of separate dots.
+  const DOT = "radial-gradient(ellipse closest-side, COLOR 0, COLOR 75%, transparent 100%)";
+  const layers = [];
+  const column = (rawMask, color, x) => {
+    const mask = fold(rawMask);
+    if (!mask) return;
+    for (let i = 0; i < n; i++) {
+      if (!((mask >> i) & 1)) continue;
+      const y = `calc(${i} * var(--cell-size) / ${n} - (var(--mark-h) - var(--cell-size) / ${n}) / 2)`;
+      layers.push([DOT.replaceAll("COLOR", color), `${x} ${y}`]);
+    }
+  };
+  const L_OUT = "var(--mark-out)", L_IN = "var(--mark-in)";
+  const R_OUT = "calc(100% - var(--mark-out-r) - var(--mark-w))";
+  const R_IN = "calc(100% - var(--mark-in-r) - var(--mark-w))";
+  column(pair[0], "var(--mark-dark)", L_OUT);
+  column(pair[0], "var(--mark-light)", L_IN);
+  column(pair[1], "var(--mark-dark)", R_OUT);
+  column(pair[1], "var(--mark-light)", R_IN);
+  if (!layers.length) return "";
+  return `background-image:${layers.map(l => l[0]).join(",")};` +
+         `background-size:${layers.map(() => "var(--mark-w) var(--mark-h)").join(",")};` +
+         `background-position:${layers.map(l => l[1]).join(",")};` +
+         "background-repeat:no-repeat;";
+}
+
 function renderGrid() {
   if (monthUnmeasured()) {
     document.getElementById("grid").classList.add("is-empty");
@@ -1928,7 +1994,8 @@ function renderGrid() {
       else if (kind === "off") cls.push("off");
       if (isCurrentMonth && d === todayD) cls.push("today-col");
       const wave = (d - 1) * 6 + h * 2.5;  // left→right wave, slight top-down tilt
-      html += `<td class="${cls.join(" ")}" data-d="${d}" data-h="${h}" data-s="${sec}" style="animation-delay:${wave.toFixed(0)}ms"></td>`;
+      const marks = day ? marksStyle(day, String(h)) : "";
+      html += `<td class="${cls.join(" ")}" data-d="${d}" data-h="${h}" data-s="${sec}" style="${marks}animation-delay:${wave.toFixed(0)}ms"></td>`;
     }
     html += '</tr>';
   }

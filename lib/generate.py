@@ -95,36 +95,76 @@ MAX_SESSIONS_PER_HOUR = 30
 PRICE_EFFECTIVE = "2026-01-01"   # effective date for the baseline snapshot
 PRICES = {
     "anthropic": {
-        #              input   output  cache_write(5m)  cache_read
-        "fable-5":    {"input": 10.0, "output": 50.0, "cache_write": 12.50, "cache_read": 1.00},
-        "mythos-5":   {"input": 10.0, "output": 50.0, "cache_write": 12.50, "cache_read": 1.00},
-        "opus-4-8":   {"input": 5.0,  "output": 25.0, "cache_write": 6.25, "cache_read": 0.50},
-        "opus-4-7":   {"input": 5.0,  "output": 25.0, "cache_write": 6.25, "cache_read": 0.50},
-        "opus-4-6":   {"input": 5.0,  "output": 25.0, "cache_write": 6.25, "cache_read": 0.50},
-        "opus-4-5":   {"input": 5.0,  "output": 25.0, "cache_write": 6.25, "cache_read": 0.50},
-        "sonnet-5":   {"input": 2.0,  "output": 10.0, "cache_write": 2.50, "cache_read": 0.20},  # intro pricing (through 2026-08-31)
-        "sonnet-4-6": {"input": 3.0,  "output": 15.0, "cache_write": 3.75, "cache_read": 0.30},
-        "sonnet-4-5": {"input": 3.0,  "output": 15.0, "cache_write": 3.75, "cache_read": 0.30},
-        "sonnet-4":   {"input": 3.0,  "output": 15.0, "cache_write": 3.75, "cache_read": 0.30},
-        "haiku-4-5":  {"input": 1.0,  "output": 5.0,  "cache_write": 1.25, "cache_read": 0.10},
+        #              input   output  cache_write(5m)  cache_write(1h)  cache_read
+        # Fast mode is a price, not a model: same weights, 2x the rate, and
+        # the cache multipliers apply on top of it.
+        "opus-5-5-fast": {"input": 8.0,  "output": 40.0, "cache_write": 10.00, "cache_write_1h": 16.0, "cache_read": 0.40},
+        "opus-5-fast":   {"input": 10.0, "output": 50.0, "cache_write": 12.50, "cache_write_1h": 20.0, "cache_read": 1.00},
+        "opus-4-8-fast": {"input": 10.0, "output": 50.0, "cache_write": 12.50, "cache_write_1h": 20.0, "cache_read": 1.00},
+        # Fable/Mythos 5.1 read cache at 0.025x base, not the usual 0.1x.
+        "fable-5-1":  {"input": 10.0, "output": 50.0, "cache_write": 12.50, "cache_write_1h": 20.0, "cache_read": 0.25},
+        "mythos-5-1": {"input": 10.0, "output": 50.0, "cache_write": 12.50, "cache_write_1h": 20.0, "cache_read": 0.25},
+        "fable-5":    {"input": 10.0, "output": 50.0, "cache_write": 12.50, "cache_write_1h": 20.0, "cache_read": 1.00},
+        "mythos-5":   {"input": 10.0, "output": 50.0, "cache_write": 12.50, "cache_write_1h": 20.0, "cache_read": 1.00},
+        # Opus 5.5 reads cache at 0.05x base.
+        "opus-5-5":   {"input": 4.0,  "output": 20.0, "cache_write": 5.00, "cache_write_1h": 8.0, "cache_read": 0.20},
+        "opus-5":     {"input": 5.0,  "output": 25.0, "cache_write": 6.25, "cache_write_1h": 10.0, "cache_read": 0.50},
+        "opus-4-8":   {"input": 5.0,  "output": 25.0, "cache_write": 6.25, "cache_write_1h": 10.0, "cache_read": 0.50},
+        "opus-4-7":   {"input": 5.0,  "output": 25.0, "cache_write": 6.25, "cache_write_1h": 10.0, "cache_read": 0.50},
+        "opus-4-6":   {"input": 5.0,  "output": 25.0, "cache_write": 6.25, "cache_write_1h": 10.0, "cache_read": 0.50},
+        "opus-4-5":   {"input": 5.0,  "output": 25.0, "cache_write": 6.25, "cache_write_1h": 10.0, "cache_read": 0.50},
+        "sonnet-5":   {"input": 2.0,  "output": 10.0, "cache_write": 2.50, "cache_write_1h": 4.0, "cache_read": 0.20},  # intro pricing became standard
+        "sonnet-4-6": {"input": 3.0,  "output": 15.0, "cache_write": 3.75, "cache_write_1h": 6.0, "cache_read": 0.30},
+        "sonnet-4-5": {"input": 3.0,  "output": 15.0, "cache_write": 3.75, "cache_write_1h": 6.0, "cache_read": 0.30},
+        "sonnet-4":   {"input": 3.0,  "output": 15.0, "cache_write": 3.75, "cache_write_1h": 6.0, "cache_read": 0.30},
+        "haiku-4-5":  {"input": 1.0,  "output": 5.0,  "cache_write": 1.25, "cache_write_1h": 2.0, "cache_read": 0.10},
+        # Retired on the first-party API, kept so old usage is still costed.
+        "opus-4-1":   {"input": 15.0, "output": 75.0, "cache_write": 18.75, "cache_write_1h": 30.0, "cache_read": 1.50},
+        "opus-4":     {"input": 15.0, "output": 75.0, "cache_write": 18.75, "cache_write_1h": 30.0, "cache_read": 1.50},
+        "haiku-3-5":  {"input": 0.8,  "output": 4.0,  "cache_write": 1.00, "cache_write_1h": 1.6, "cache_read": 0.08},
     },
     "openai": {
         # Codex. No cache-creation counter; cached input maps to cache_read.
+        "gpt-6-astra":   {"input": 10.0, "output": 50.0,  "cache_write": 0.0, "cache_read": 1.00},
+        "gpt-6-sol":     {"input": 2.0,  "output": 10.0,  "cache_write": 0.0, "cache_read": 0.20},
+        "gpt-6-luna":    {"input": 0.1,  "output": 0.5,   "cache_write": 0.0, "cache_read": 0.01},
+        "gpt-5.6-cyber": {"input": 12.5, "output": 75.0,  "cache_write": 0.0, "cache_read": 1.25},
+        "gpt-5.6-sol":   {"input": 4.0,  "output": 20.0,  "cache_write": 0.0, "cache_read": 0.40},
+        "gpt-5.6-terra": {"input": 2.0,  "output": 12.0,  "cache_write": 0.0, "cache_read": 0.20},
+        "gpt-5.6-luna":  {"input": 0.2,  "output": 1.2,   "cache_write": 0.0, "cache_read": 0.02},
         "gpt-5.5":     {"input": 5.0,  "output": 30.0,  "cache_write": 0.0, "cache_read": 0.50},
         "gpt-5.5-pro": {"input": 30.0, "output": 180.0, "cache_write": 0.0, "cache_read": 0.0},
+        "gpt-5.4":       {"input": 2.5,  "output": 15.0,  "cache_write": 0.0, "cache_read": 0.25},
+        "gpt-5.4-mini":  {"input": 0.75, "output": 4.5,   "cache_write": 0.0, "cache_read": 0.075},
+        "gpt-5.4-nano":  {"input": 0.2,  "output": 1.25,  "cache_write": 0.0, "cache_read": 0.02},
+        "gpt-5.4-pro":   {"input": 30.0, "output": 180.0, "cache_write": 0.0, "cache_read": 0.0},
+        "gpt-5.3-codex": {"input": 1.75, "output": 14.0,  "cache_write": 0.0, "cache_read": 0.175},
     },
 }
 
+# Per-record token counters carried end to end. `cache_create_1h` is a SUBSET
+# of `cache_create` (the API reports the 5m and 1h writes separately and their
+# sum as the total), kept alongside it rather than instead of it: a 1-hour
+# cache write costs 2x base input where a 5-minute one costs 1.25x, and stored
+# history that predates the split simply has no 1h share, which then costs
+# exactly as it did before.
+TOKEN_FIELDS = ("input", "output", "cache_read", "cache_create", "cache_create_1h")
+
 # Models seen in logs that had no matching price (costed $0). Reported at the end
 # of a run so a missing rate is visible rather than silently under-counting.
-_UNPRICED = set()
+_UNPRICED = defaultdict(int)   # model -> tokens that went uncosted
 
 
-def normalize_model(name):
+def normalize_model(name, speed=None):
     """Map a raw model id to a price-table key.
     claude-opus-4-7 → opus-4-7 ; claude-haiku-4-5-20251001 → haiku-4-5 ;
     claude-opus-4-8[1m] → opus-4-8 (1M context is standard-priced) ;
-    bare 'opus' → opus-4-7 ; '<synthetic>'/empty → None (no cost)."""
+    bare 'opus' → opus-4-7 ; '<synthetic>'/empty → None (no cost).
+
+    `speed` is the request's service speed as the log records it. Fast mode
+    is not a different model but it IS a different price (2x on the Opus
+    tier), so it gets its own key — which also keeps the two apart in the
+    per-model breakdown instead of blending them at one blended rate."""
     if not name:
         return None
     n = name.strip().split("[")[0]            # drop context-window suffix like [1m]
@@ -134,9 +174,16 @@ def normalize_model(name):
         parts = n[len("claude-"):].split("-")
         # drop trailing date-stamp segments, e.g. claude-sonnet-4-20250514 → sonnet-4
         parts = [p for p in parts if not (p.isdigit() and len(p) >= 6)]
-        return "-".join(parts[:3]) if len(parts) >= 3 else "-".join(parts)
+        # Pre-4 ids put the version first ('claude-3-5-haiku'); the price
+        # table, like every current id, puts the family first ('haiku-3-5').
+        if parts and parts[0].isdigit():
+            ver = [p for p in parts if p.isdigit()]
+            parts = [p for p in parts if not p.isdigit()][:1] + ver
+        n = "-".join(parts[:3]) if len(parts) >= 3 else "-".join(parts)
     if n == "opus":
-        return "opus-4-7"
+        n = "opus-4-7"
+    if speed == "fast" and f"{n}-fast" in PRICES["anthropic"]:
+        return f"{n}-fast"
     return n                                  # gpt-5.5 etc. pass through
 
 
@@ -152,32 +199,74 @@ def _model_version(key):
     return tuple(int(x) for x in re.findall(r"\d+", key)) or (0,)
 
 
-def _rate_in_table(table, model):
-    """Exact match, else newest STANDARD same-family tier — never a premium
-    '-pro'/'-max' variant (which would massively over-charge an unseen model:
-    an unknown gpt-* must fall back to gpt-5.5, not gpt-5.5-pro)."""
+_PREMIUM_TIERS = ("-pro", "-max", "-fast")
+
+# Models priced by a nearest match rather than their own rate: model -> key
+# used, and model -> tokens so costed. Reported at the end of a run, because a
+# guessed rate is still a guess and ought to be visible.
+_FALLBACK_KEY = {}
+_FALLBACK_TOKENS = defaultdict(int)
+
+
+def _lookup(table, model):
+    """(key, rate) for `model` in one price table, or (None, None).
+
+    Exact match first. Otherwise the longest known PREFIX of the id
+    ('gpt-5.4-codex-astra' → 'gpt-5.4'), which keeps a variant on its own
+    generation's price. Only then the newest standard tier of the family, with
+    ties broken by name so the choice is stable run to run — several tiers can
+    share one version number ('gpt-6-astra', '-sol', '-luna' are 100x apart),
+    and an unordered pick among them would make the cost jump between runs.
+    Premium tiers ('-pro', '-max', '-fast') are never a fallback target: they
+    would massively over-charge an unseen model."""
     if not table or not model:
-        return None
+        return None, None
     if model in table:
-        return table[model]
-    fam = model.split("-")[0]
+        return model, table[model]
+    parts = model.split("-")
+    for n in range(len(parts) - 1, 0, -1):
+        key = "-".join(parts[:n])
+        if key in table and not key.endswith(_PREMIUM_TIERS):
+            return key, table[key]
+    fam = parts[0]
     cands = [k for k in table if k.split("-")[0] == fam]
     if not cands:
-        return None
-    std = [k for k in cands if not k.endswith(("-pro", "-max"))] or cands
-    return table[max(std, key=_model_version)]
+        return None, None
+    std = [k for k in cands if not k.endswith(_PREMIUM_TIERS)] or cands
+    key = max(std, key=lambda k: (_model_version(k), k))
+    return key, table[key]
+
+
+def _rate_in_table(table, model):
+    return _lookup(table, model)[1]
 
 
 def _rate_for(snapshot, model):
     """Rate for `model`, preferring the date-effective snapshot so genuine price
     CHANGES stay historical. If the model is absent from that snapshot entirely
     (i.e. it was only added to PRICES later — a fix, not a price change), fall
-    back to the current PRICES so historical usage of it is still costed."""
+    back to the current PRICES so historical usage of it is still costed.
+
+    Order matters: an EXACT match must be tried in both tables before the
+    nearest-match fallback runs anywhere. Otherwise a model added to the price
+    book later (say 'fable-5-1') matches its older sibling inside the old
+    snapshot, the fallback wins, and the model is stuck on the sibling's rate
+    for every past day — the rate fix never reaches history."""
     prov = _provider_for_model(model)
     if not model or not prov:
         return None
-    return (_rate_in_table((snapshot or {}).get(prov, {}), model)
-            or _rate_in_table(_effective_prices().get(prov, {}), model))
+    snap_table = (snapshot or {}).get(prov, {}) or {}
+    cur_table = _effective_prices().get(prov, {}) or {}
+    if model in snap_table:          # its own rate on that date
+        return snap_table[model]
+    if model in cur_table:           # priced only later — apply retroactively
+        return cur_table[model]
+    key, rate = _lookup(snap_table, model)       # genuinely unknown model
+    if rate is None:
+        key, rate = _lookup(cur_table, model)
+    if rate is not None:
+        _FALLBACK_KEY[model] = key
+    return rate
 
 
 def _snapshot_for_date(prices, date_str):
@@ -200,15 +289,29 @@ def cost_of_models(models_dict, snapshot):
     total = 0.0
     for model, tk in models_dict.items():
         r = _rate_for(snapshot, model)
+        if r and model in _FALLBACK_KEY:
+            _FALLBACK_TOKENS[model] += sum(
+                v for v in tk.values() if isinstance(v, (int, float)))
         if not r:
             if model:
-                _UNPRICED.add(model)   # surfaced as a warning at end of run
+                # Record how much went uncosted, not just that something did:
+                # a stray tag worth a few thousand tokens and a real model
+                # worth a billion look identical in a bare name list.
+                _UNPRICED[model] += sum(
+                    v for v in tk.values() if isinstance(v, (int, float)))
             continue
+        # cache_create is every write; cache_create_1h is the slice of it
+        # written to the 1-hour cache, which bills higher. History written
+        # before the split carries no 1h share and so costs as it always did.
+        created = tk.get("cache_create", 0)
+        created_1h = min(tk.get("cache_create_1h", 0), created)
+        rate_1h = r.get("cache_write_1h") or r["cache_write"]
         total += (
             tk.get("input", 0)        * r["input"]
             + tk.get("output", 0)       * r["output"]
             + tk.get("cache_read", 0)   * r["cache_read"]
-            + tk.get("cache_create", 0) * r["cache_write"]
+            + (created - created_1h)    * r["cache_write"]
+            + created_1h                * rate_1h
         ) / 1_000_000.0
     return total
 
@@ -220,24 +323,40 @@ _OVERRIDE_EFFECTIVE = None   # explicit change date from prices.json, if any
 def _sane_rate(r):
     """Validate one override rate dict; return a clean copy or None. Guards the
     daily auto-refresh: a mis-parsed/garbage value is ignored (falls back to the
-    built-in PRICES) rather than silently corrupting cost. Bounds: input/output
-    must be > 0, everything within [0, 1000] $/MTok, cache-read ≤ 2× input,
-    cache-write ≤ 4× input."""
+    built-in PRICES) rather than silently corrupting cost.
+
+    The bounds encode what a published rate can actually look like:
+      * input/output > 0, everything within [0, 1000] $/MTok;
+      * a cache READ is always a fraction of base input (0.025x-0.1x in
+        practice) — anything above half of input is a misread column, not a
+        price. This bound exists because a refresh once read gpt-5.5-pro's
+        cache read as $30, which is its INPUT price, and the bogus value went
+        straight into the dated price history;
+      * a cache WRITE either does not apply (0) or costs MORE than base input
+        (1.25x for 5m, 2x for 1h), never less, and never above 4x."""
     if not isinstance(r, dict):
         return None
     try:
         inp = float(r["input"]); out = float(r["output"])
         cw = float(r.get("cache_write", 0)); cr = float(r.get("cache_read", 0))
+        cw1 = float(r.get("cache_write_1h", 0) or 0)
     except (KeyError, TypeError, ValueError):
         return None
-    vals = (inp, out, cw, cr)
+    vals = (inp, out, cw, cr, cw1)
     if inp <= 0 or out <= 0:
         return None
     if any(v < 0 or v > 1000 for v in vals):
         return None
-    if cr > inp * 2 or cw > inp * 4:
+    if cr > inp * 0.5:              # cache read is a fraction of input, always
         return None
-    return {"input": inp, "output": out, "cache_write": cw, "cache_read": cr}
+    if cw and not (inp <= cw <= inp * 4):   # a write costs more than input
+        return None
+    if cw1 and not (cw <= cw1 <= inp * 4):  # the 1h write is the pricier one
+        return None
+    clean = {"input": inp, "output": out, "cache_write": cw, "cache_read": cr}
+    if cw1:
+        clean["cache_write_1h"] = cw1
+    return clean
 
 
 def _effective_prices():
@@ -263,12 +382,36 @@ def _effective_prices():
             for prov in ("anthropic", "openai"):
                 for m, r in (data.get(prov) or {}).items():
                     rate = _sane_rate(r)
-                    if rate:
-                        eff.setdefault(prov, {})[m] = rate
+                    if not rate:
+                        continue
+                    # Layer onto the built-in rate rather than replacing it, so
+                    # a refresh that did not read some column (the 1-hour cache
+                    # write, say) does not silently delete a rate we do know.
+                    merged = dict(eff.get(prov, {}).get(m) or {})
+                    merged.update(rate)
+                    eff.setdefault(prov, {})[m] = merged
     except (OSError, json.JSONDecodeError, ValueError, TypeError):
         pass
     _EFFECTIVE_PRICES = eff
     return eff
+
+
+def _price_book_age_days():
+    """Days since the price override was last refreshed, or None if there is no
+    override file / no `fetched` stamp. The refresh itself lives in the
+    /activity command (it reads the published pricing pages), so running
+    generate.py directly never updates prices — this is what makes that
+    visible instead of silently costing today at last month's rates."""
+    try:
+        cfg = load_config()
+        ov = Path(os.path.expanduser(cfg.get("output_dir", DEFAULTS["output_dir"]))) / "prices.json"
+        stamp = json.loads(ov.read_text()).get("fetched")
+        if not stamp:
+            return None
+        fetched = datetime.strptime(stamp, "%Y-%m-%d").date()
+        return (datetime.now().astimezone().date() - fetched).days
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return None
 
 
 def _override_effective_date():
@@ -504,12 +647,20 @@ def extract_tokens(obj):
     usage = msg.get("usage")
     if not isinstance(usage, dict):
         return None
+    # `cache_creation` breaks the write total down by cache duration. The two
+    # durations bill differently (1.25x base input for 5m, 2x for 1h), so the
+    # 1h share is carried separately; without it every write is costed at the
+    # cheaper 5m rate.
+    detail = usage.get("cache_creation")
+    one_hour = int((detail or {}).get("ephemeral_1h_input_tokens") or 0)
+    created = int(usage.get("cache_creation_input_tokens") or 0)
     return {
         "input": int(usage.get("input_tokens") or 0),
         "output": int(usage.get("output_tokens") or 0),
         "cache_read": int(usage.get("cache_read_input_tokens") or 0),
-        "cache_create": int(usage.get("cache_creation_input_tokens") or 0),
-        "model": normalize_model(msg.get("model")),
+        "cache_create": created,
+        "cache_create_1h": min(one_hour, created),
+        "model": normalize_model(msg.get("model"), usage.get("speed")),
     }
 
 
@@ -740,12 +891,23 @@ def _codex_tokens_from_event(payload, model=None):
     usage = info.get("last_token_usage") or {}
     if not isinstance(usage, dict):
         return None
+    # Codex reports OpenAI's totals, where the detail counters are SUBSETS:
+    # `input_tokens` already contains `cached_input_tokens` (and any
+    # `cache_write_input_tokens`), and `output_tokens` already contains
+    # `reasoning_output_tokens` — the rollout's own `total_tokens` is just
+    # input + output, which is how the nesting is verifiable. Claude's
+    # `input_tokens`, by contrast, EXCLUDES its cache counters. Peel the
+    # subsets off here so both providers mean the same thing downstream:
+    # `input` is uncached input only, and every token is counted once.
+    inp = int(usage.get("input_tokens") or 0)
+    cached = int(usage.get("cached_input_tokens") or 0)
+    cache_w = int(usage.get("cache_write_input_tokens") or 0)
     return {
-        "input": int(usage.get("input_tokens") or 0),
-        "output": int(usage.get("output_tokens") or 0)
-              + int(usage.get("reasoning_output_tokens") or 0),
-        "cache_read": int(usage.get("cached_input_tokens") or 0),
-        "cache_create": 0,  # Codex has no cache-creation counter
+        "input": max(0, inp - cached - cache_w),
+        "output": int(usage.get("output_tokens") or 0),
+        "cache_read": cached,
+        "cache_create": cache_w,
+        "cache_create_1h": 0,   # Codex reports no cache-duration split
         "model": model,
     }
 
@@ -983,21 +1145,27 @@ def build_prompt_hours(events, gap_limit):
     return hours, proj_hours, sessions
 
 
+# The hour strips drawn on a cell's edges: an hour is split into this many
+# buckets and each is a single bit, so a whole hour of both sides costs two
+# small integers. Five-minute buckets are as fine as a 24-pixel cell can show.
+MARK_BUCKETS = 12
+
+
 def build_buckets(events, gap_limit, cache_read_weight, prompt_gap_limit=None):
     hour_b = defaultdict(float)
     session_b = defaultdict(lambda: defaultdict(float))
     daily_tokens = defaultdict(lambda: {
-        "input": 0, "output": 0, "cache_read": 0, "cache_create": 0, "all": 0,
+        **{f: 0 for f in TOKEN_FIELDS}, "all": 0,
     })
     # Per-model breakdown per day, for accurate API-cost pricing.
     daily_models = defaultdict(lambda: defaultdict(lambda: {
-        "input": 0, "output": 0, "cache_read": 0, "cache_create": 0,
+        **{f: 0 for f in TOKEN_FIELDS},
     }))
     # Per-project: billable token total per day, and per-model split per day
     # (so tokens/cost can be filtered by project too).
     daily_proj_tokens = defaultdict(lambda: defaultdict(int))
     daily_proj_models = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: {
-        "input": 0, "output": 0, "cache_read": 0, "cache_create": 0,
+        **{f: 0 for f in TOKEN_FIELDS},
     })))
 
     for i in range(1, len(events)):
@@ -1006,13 +1174,21 @@ def build_buckets(events, gap_limit, cache_read_weight, prompt_gap_limit=None):
         if ts_cur - ts_prev <= gap_limit:
             distribute_interval(ts_prev, ts_cur, sid, hour_b, session_b)
 
+    marks = defaultdict(lambda: [0, 0])
+    for ev in events:
+        kind = ev[5] if len(ev) > 5 else ""
+        if kind in ("prompt", "reply"):
+            ts = ev[0]
+            bit = 1 << (ts.minute * MARK_BUCKETS // 60)
+            marks[(ts.year, ts.month, ts.day, ts.hour)][0 if kind == "prompt" else 1] |= bit
+
     for ev in events:
         ts, tok = ev[0], ev[1]
         if not tok:
             continue
         proj = ev[3] if len(ev) > 3 and ev[3] else "unknown"
         k = (ts.year, ts.month, ts.day)
-        for f in ("input", "output", "cache_read", "cache_create"):
+        for f in TOKEN_FIELDS:
             daily_tokens[k][f] += tok[f]
         billable = (
             tok["input"] + tok["output"] + tok["cache_create"]
@@ -1024,7 +1200,7 @@ def build_buckets(events, gap_limit, cache_read_weight, prompt_gap_limit=None):
         if model:
             mb = daily_models[k][model]
             pmb = daily_proj_models[k][proj][model]
-            for f in ("input", "output", "cache_read", "cache_create"):
+            for f in TOKEN_FIELDS:
                 mb[f] += tok[f]
                 pmb[f] += tok[f]
     proj_hour_b = build_project_hours(events, gap_limit)
@@ -1032,7 +1208,7 @@ def build_buckets(events, gap_limit, cache_read_weight, prompt_gap_limit=None):
         events, prompt_gap_limit or gap_limit)
     return (hour_b, session_b, daily_tokens, daily_models,
             daily_proj_tokens, daily_proj_models, proj_hour_b,
-            prompt_hour_b, prompt_proj_hour_b, prompt_session_b)
+            prompt_hour_b, prompt_proj_hour_b, prompt_session_b, marks)
 
 
 def _session_items(sid_map, session_meta):
@@ -1059,17 +1235,18 @@ def _session_items(sid_map, session_meta):
 def shape_output(hour_b, session_b, daily_tokens, daily_models, session_meta,
                  daily_proj_tokens=None, daily_proj_models=None, proj_hour_b=None,
                  prompt_hour_b=None, prompt_proj_hour_b=None,
-                 prompt_session_b=None):
+                 prompt_session_b=None, marks_b=None):
     daily_proj_tokens = daily_proj_tokens or {}
     daily_proj_models = daily_proj_models or {}
     proj_hour_b = proj_hour_b or {}
     prompt_hour_b = prompt_hour_b or {}
     prompt_proj_hour_b = prompt_proj_hour_b or {}
     prompt_session_b = prompt_session_b or {}
+    marks_b = marks_b or {}
     months = defaultdict(lambda: defaultdict(lambda: {
         "hours": {}, "sessions": {}, "total": 0, "tokens": None, "models": None,
         "proj_tokens": None, "proj_models": None, "proj_hours": None,
-        "prompt_hours": None, "prompt_proj_hours": None, "prompt_sessions": {},
+        "prompt_hours": None, "prompt_proj_hours": None, "prompt_sessions": {}, "marks": {},
     }))
     for (y, m, d, h), sec in hour_b.items():
         if sec <= 0:
@@ -1120,6 +1297,13 @@ def shape_output(hour_b, session_b, daily_tokens, daily_models, session_meta,
         items = _session_items(sid_map, session_meta)
         if items:
             months[f"{y:04d}-{m:02d}"][f"{d:02d}"]["prompt_sessions"][str(h)] = items
+
+    # Which five-minute buckets of each hour carried a message or an answer,
+    # for the strips the heatmap draws down a cell's left and right edges.
+    for (y, m, d, h), pair in marks_b.items():
+        if not pair[0] and not pair[1]:
+            continue
+        months[f"{y:04d}-{m:02d}"][f"{d:02d}"]["marks"][str(h)] = list(pair)
 
     for (y, m, d), tk in daily_tokens.items():
         months[f"{y:04d}-{m:02d}"][f"{d:02d}"]["tokens"] = tk
@@ -1217,7 +1401,7 @@ def merge_models(a, b):
         bv = (b or {}).get(mdl, {})
         out[mdl] = {
             f: max(av.get(f, 0), bv.get(f, 0))
-            for f in ("input", "output", "cache_read", "cache_create")
+            for f in TOKEN_FIELDS
         }
     return out
 
@@ -1228,6 +1412,19 @@ def merge_proj_tokens(a, b):
         return None
     return {p: max((a or {}).get(p, 0), (b or {}).get(p, 0))
             for p in set(a or {}) | set(b or {})}
+
+
+def merge_marks(a, b):
+    """Per-hour edge strips — a bitwise union, since a bucket either carried
+    something in some run or it did not."""
+    out = {}
+    for hkey in set(a or {}) | set(b or {}):
+        av = (a or {}).get(hkey) or [0, 0]
+        bv = (b or {}).get(hkey) or [0, 0]
+        pair = [int(av[0]) | int(bv[0]), int(av[1]) | int(bv[1])]
+        if pair[0] or pair[1]:
+            out[hkey] = pair
+    return out
 
 
 def merge_proj_hours(a, b):
@@ -1260,7 +1457,7 @@ def _sum_models(a, b):
         bv = (b or {}).get(mdl, {})
         out[mdl] = {
             f: av.get(f, 0) + bv.get(f, 0)
-            for f in ("input", "output", "cache_read", "cache_create")
+            for f in TOKEN_FIELDS
         }
     return out
 
@@ -1381,6 +1578,7 @@ def merge_months(current, history):
                 "sessions": merge_sessions(cd.get("sessions", {}), hd.get("sessions", {})),
                 "prompt_sessions": merge_sessions(cd.get("prompt_sessions", {}),
                                                   hd.get("prompt_sessions", {})),
+                "marks": merge_marks(cd.get("marks", {}), hd.get("marks", {})),
                 "tokens": merge_tokens(cd.get("tokens"), hd.get("tokens")),
                 "models": merge_models(cd.get("models"), hd.get("models")),
                 "proj_tokens": merge_proj_tokens(cd.get("proj_tokens"), hd.get("proj_tokens")),
@@ -1484,6 +1682,63 @@ def _iter_history_files(history_file):
 # ~/.claude/history.jsonl, so the operator clock can always be rebuilt.
 PROMPT_CLOCK_VERSION = 7
 
+# Bumped when the MEANING of a stored token field changes, as opposed to its
+# value. History merges every token field by max (so a pruned log can never
+# lower a number), which also means a counting fix can never lower one either
+# — the stale, larger number always wins. A bump strips the affected data so
+# the next run rebuilds it under the new rule.
+TOKEN_RULE_VERSION = 1
+
+# cache_read_weight of the current run, needed to rebuild the weighted "all".
+_CACHE_READ_WEIGHT = [DEFAULTS["cache_read_weight"]]
+
+
+def _strip_openai_tokens(months):
+    """Drop every OpenAI-model token entry from stored history.
+
+    Codex rollouts are never pruned (unlike Claude's), so whatever is removed
+    here is rebuilt in full from the live logs on this very run — and rebuilt
+    under the corrected rule, where `input` excludes the cached and
+    cache-written subsets and `output` excludes reasoning. The day's running
+    totals are decremented by exactly what was removed, so a day whose Claude
+    half IS pruned keeps that half intact."""
+    w = _CACHE_READ_WEIGHT[0]
+    fields = TOKEN_FIELDS
+
+    def drop(models):
+        """Remove openai models from one dict; return what was removed."""
+        gone = {f: 0 for f in fields}
+        for mdl in [m for m in (models or {}) if _provider_for_model(m) == "openai"]:
+            for f in fields:
+                gone[f] += int((models[mdl] or {}).get(f, 0) or 0)
+            del models[mdl]
+        return gone
+
+    def weighted(t):
+        return (t["input"] + t["output"] + t["cache_create"]
+                + int(t["cache_read"] * w))
+
+    for mval in months.values():
+        for day in (mval.get("days") or {}).values():
+            gone = drop(day.get("models"))
+            tokens = day.get("tokens")
+            if tokens:
+                for f in fields:
+                    if f in tokens:
+                        tokens[f] = max(0, tokens[f] - gone[f])
+                if "all" in tokens:
+                    tokens["all"] = max(0, tokens["all"] - weighted(gone))
+            for proj, pmodels in (day.get("proj_models") or {}).items():
+                pgone = drop(pmodels)
+                pt = day.get("proj_tokens") or {}
+                if proj in pt:
+                    pt[proj] = max(0, pt[proj] - weighted(pgone))
+        mval["tokens_total"] = sum(
+            (d.get("tokens") or {}).get("all", 0)
+            for d in (mval.get("days") or {}).values()
+        )
+    return months
+
 
 # Threshold the current run computes the operator clock at, in minutes. Set
 # once in main() and compared against what history was written with.
@@ -1497,6 +1752,7 @@ def _strip_prompt_clock(months):
             day.pop("prompt_hours", None)
             day.pop("prompt_proj_hours", None)
             day.pop("prompt_sessions", None)
+            day.pop("marks", None)   # built from the same prompt/reply split
             day.pop("prompt_total", None)
     return months
 
@@ -1517,6 +1773,9 @@ def _parse_history_sources(raw):
             or raw.get("prompt_clock_gap") != _PROMPT_CLOCK_GAP[0]):
         for months in out.values():
             _strip_prompt_clock(months)
+    if raw.get("token_rule") != TOKEN_RULE_VERSION:
+        for months in out.values():
+            _strip_openai_tokens(months)
     return out
 
 
@@ -1535,9 +1794,41 @@ def _load_history_sources(history_file):
     return out
 
 
+def _repair_price_snapshot(snap):
+    """Correct values inside a stored snapshot that cannot be a real published
+    rate. Kept deliberately narrow: only a cache-read price above half the base
+    input price, which is not a price at all but a column read off the wrong
+    column. Everything else is left exactly as recorded — a rate that was real
+    on its date stays on its date, even when today's rate differs."""
+    for prov in ("anthropic", "openai"):
+        for model, rate in (snap.get(prov) or {}).items():
+            if not isinstance(rate, dict):
+                continue
+            inp = rate.get("input") or 0
+            if inp and (rate.get("cache_read") or 0) > inp * 0.5:
+                rate["cache_read"] = 0.0
+    return snap
+
+
+def _dedupe_price_snapshots(ordered):
+    """Drop a snapshot whose rates are identical to the one before it. Costing
+    picks the latest snapshot effective on or before a day, so an identical
+    successor changes nothing — it is only noise, and after a repair there can
+    be a run of them where a misread value flipped back and forth."""
+    out = []
+    for snap in ordered:
+        rates = {k: v for k, v in snap.items() if k != "effective"}
+        if out and {k: v for k, v in out[-1].items() if k != "effective"} == rates:
+            continue
+        out.append(snap)
+    return out
+
+
 def _load_history_prices(history_file):
     """Union of dated price snapshots across history.json and all backups, so a
-    clobber that drops the `prices` section is healed from the backups."""
+    clobber that drops the `prices` section is healed from the backups. Each
+    snapshot is repaired and the run is de-duplicated on the way out, so a bad
+    value cannot be resurrected from an older backup either."""
     by_eff = {}
     for p in _iter_history_files(history_file):
         try:
@@ -1547,8 +1838,8 @@ def _load_history_prices(history_file):
         for snap in (raw.get("prices") or []):
             eff = snap.get("effective")
             if eff and eff not in by_eff:
-                by_eff[eff] = snap
-    return [by_eff[e] for e in sorted(by_eff)]
+                by_eff[eff] = _repair_price_snapshot(snap)
+    return _dedupe_price_snapshots([by_eff[e] for e in sorted(by_eff)])
 
 
 def _load_history_renames(history_file):
@@ -1685,6 +1976,7 @@ def compact_history(output_dir, prompt_gap_minutes=None):
                        "sources": sources_history, "prices": prices,
                        "prompt_clock": PROMPT_CLOCK_VERSION,
                        "prompt_clock_gap": _PROMPT_CLOCK_GAP[0],
+                       "token_rule": TOKEN_RULE_VERSION,
                        "project_renames": renames},
                       ensure_ascii=False, indent=2)
     stamp = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
@@ -1708,6 +2000,7 @@ def main():
     gap_limit = timedelta(minutes=int(cfg["gap_minutes"]))
     prompt_gap_limit = timedelta(minutes=int(cfg["prompt_gap_minutes"]))
     _PROMPT_CLOCK_GAP[0] = int(cfg["prompt_gap_minutes"])
+    _CACHE_READ_WEIGHT[0] = float(cfg["cache_read_weight"])
     work_intervals = [
         [int(s), int(e)] for s, e in cfg.get("work_intervals", DEFAULTS["work_intervals"])
     ]
@@ -1755,11 +2048,12 @@ def main():
         ev = events_by_source[src]
         (hour_b, sess_b, day_tok, day_models,
          day_proj_tok, day_proj_models, proj_hour_b,
-         prompt_hour_b, prompt_proj_hour_b, prompt_sess_b) = build_buckets(
+         prompt_hour_b, prompt_proj_hour_b, prompt_sess_b, marks_b) = build_buckets(
             ev, gap_limit, cache_read_weight, prompt_gap_limit)
         current_months = shape_output(hour_b, sess_b, day_tok, day_models, session_meta,
                                       day_proj_tok, day_proj_models, proj_hour_b,
-                                      prompt_hour_b, prompt_proj_hour_b, prompt_sess_b)
+                                      prompt_hour_b, prompt_proj_hour_b, prompt_sess_b,
+                                      marks_b)
         merged_by_source[src] = merge_months(current_months, history_by_source.get(src, {}))
         run_seconds[src] = sum(hour_b.values())
 
@@ -1822,6 +2116,7 @@ def main():
          "prices": price_book,
          "prompt_clock": PROMPT_CLOCK_VERSION,
          "prompt_clock_gap": _PROMPT_CLOCK_GAP[0],
+         "token_rule": TOKEN_RULE_VERSION,
          "project_renames": project_renames},
         ensure_ascii=False, indent=2,
     )
@@ -1847,6 +2142,7 @@ def main():
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "gap_limit_minutes": int(gap_limit.total_seconds() // 60),
         "prompt_gap_limit_minutes": int(prompt_gap_limit.total_seconds() // 60),
+        "mark_buckets": MARK_BUCKETS,
         "work_intervals": work_intervals,
         "work_days": work_days,
         "first_day_of_week": first_day_of_week,
@@ -1863,8 +2159,21 @@ def main():
     print(f"  output:          {output_html}")
     print(f"  history:         {history_file}")
     if _UNPRICED:
-        print(f"  ⚠ no price for:  {', '.join(sorted(_UNPRICED))} — costed $0; "
+        listed = ", ".join(f"{m} ({_UNPRICED[m]:,} tok)"
+                           for m in sorted(_UNPRICED, key=_UNPRICED.get, reverse=True))
+        print(f"  ⚠ no price for:  {listed} — costed $0; "
               f"add rates to PRICES in generate.py")
+
+    if _FALLBACK_TOKENS:
+        listed = ", ".join(
+            f"{m} → {_FALLBACK_KEY[m]} ({_FALLBACK_TOKENS[m]:,} tok)"
+            for m in sorted(_FALLBACK_TOKENS, key=_FALLBACK_TOKENS.get, reverse=True))
+        print(f"  ⚠ priced by nearest match:  {listed}")
+
+    stale = _price_book_age_days()
+    if stale is not None and stale > 7:
+        print(f"  ⚠ prices last fetched {stale} days ago — run /activity (not "
+              f"generate.py directly) to refresh them")
 
     if "--open" in sys.argv or (auto_open and "--no-open" not in sys.argv):
         webbrowser.open(f"file://{output_html.resolve()}")

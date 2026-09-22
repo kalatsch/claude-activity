@@ -26,16 +26,21 @@ it in a browser (system fonts are used as a fallback offline).
 - Daily token totals (input + output + cache, weighted) per month — split by
   source via the toggle
 - **Estimated API cost** — what your usage *would* have cost on pay-as-you-go
-  API pricing, computed **per model** (Opus / Sonnet / Haiku / Codex) from the
-  exact input / output / cache-write / cache-read token split. Shown as a
-  sidebar KPI and per day in the totals tooltip (alongside that day's tokens)
+  API pricing, computed **per model and per price tier** from the exact input /
+  output / cache-write / cache-read token split: 1-hour cache writes are costed
+  apart from 5-minute ones (2x vs 1.25x base input), and fast-mode requests
+  apart from standard ones. Shown as a sidebar KPI and per day in the totals
+  tooltip (alongside that day's tokens)
 - **Historical pricing** — each run records the current price table into
   `history.json` with an effective date; old snapshots are never deleted, so
   every day is costed at the rates in effect on that day (past months are not
   re-priced when rates change)
 - **Auto price refresh** — the first `/activity` each day silently fetches the
-  official Anthropic/OpenAI pricing pages and writes `prices.json`; out-of-range
-  values are ignored as a safety net. This is the only network call the
+  official Anthropic/OpenAI pricing pages, reads **every** model row (so newly
+  released models get priced without a plugin update) and merges them into
+  `prices.json` — models that drop off a page are kept, since a model vanishing
+  from a page is not a price change. Implausible values (a cache read above
+  half the input rate, a cache write below it) are rejected as a safety net. This is the only network call the
   *generator* makes (the dashboard itself also loads web fonts from Google Fonts
   on open); disable it by removing Step 2.5 from `commands/activity.md`
 - **Today's column is highlighted** when viewing the current month
@@ -119,7 +124,12 @@ threshold, first day of week) and saves the answers to
    (non-work day).
 4. **Tokens**: every Claude `assistant` event's `usage` block (and every Codex
    `token_count` event's usage) is summed per day, broken down by model and by
-   type (input / output / cache-write / cache-read).
+   type (input / output / cache-write, with its 1-hour share / cache-read).
+   The two providers report differently and are normalised to one meaning:
+   Claude's `input_tokens` already excludes cache traffic, while Codex's
+   `input_tokens` *contains* `cached_input_tokens` and its `output_tokens`
+   *contains* `reasoning_output_tokens` — so for Codex the subsets are peeled
+   off, and every token is counted exactly once.
 5. **API cost**: each day's per-model tokens are multiplied by that model's
    published per-token rates (input / output / cache-write / cache-read) using
    the price snapshot effective on that date. Rates come from the `PRICES` table
@@ -129,14 +139,23 @@ threshold, first day of week) and saves the answers to
    overwrites the old ones, so past days stay costed at their original rates. If
    `prices.json` includes an `"effective": "YYYY-MM-DD"` (the real change date),
    the snapshot is stamped with it and backfills correctly even if the plugin
-   only runs days later; otherwise it is stamped with the run date. A model with
-   no rate is costed $0 and reported with a ⚠ warning.
+   only runs days later; otherwise it is stamped with the run date.
+
+   A model's rate is looked up in this order: its own rate in the snapshot for
+   that day → its own rate in the current price book (a model added to the book
+   later is a fix, not a price change, so it applies retroactively) → the
+   nearest known model (the longest matching id prefix, then the newest standard
+   tier of the family — never a `-pro` / `-max` / `-fast` tier). Every
+   nearest-match guess is listed with a ⚠ at the end of the run, and a model
+   with no rate at all is costed $0 and reported the same way, with the token
+   volume involved.
 
    `prices.json` shape:
    ```json
    {
      "effective": "2026-06-09",
-     "anthropic": { "fable-5": {"input": 10, "output": 50, "cache_write": 12.5, "cache_read": 1} },
+     "anthropic": { "fable-5": {"input": 10, "output": 50, "cache_write": 12.5, "cache_write_1h": 20, "cache_read": 1},
+                    "opus-5-fast": {"input": 10, "output": 50, "cache_write": 12.5, "cache_write_1h": 20, "cache_read": 1} },
      "openai":    { "gpt-5.5":  {"input": 5,  "output": 30, "cache_write": 0,    "cache_read": 0.5} }
    }
    ```

@@ -139,34 +139,66 @@ python3 -c "import json,os,datetime; p=os.path.expanduser('~/.claude-activity/pr
 
 If it prints `SKIP`, go straight to Step 3. Only continue when it prints `FETCH`.
 
-2. Fetch current pricing (best-effort; on any failure, do NOT write — keep the
-   existing file and continue to Step 3):
+2. Read the file you are about to update, so the refresh MERGES instead of
+   replacing (`cat ~/.claude-activity/prices.json`, may not exist yet).
+
+3. Fetch current pricing (best-effort; on any failure, do NOT write — keep the
+   existing file and continue to Step 3). Read **every model row in the table**,
+   not a fixed list: a model released after this command was written must still
+   end up priced.
    - `WebFetch` `https://platform.claude.com/docs/en/about-claude/pricing`
      (follow the redirect if returned). From the **Model pricing** table read,
-     per model: *Base Input Tokens* → `input`, *5m Cache Writes* → `cache_write`,
-     *Cache Hits & Refreshes* → `cache_read`, *Output Tokens* → `output`. Strip
-     `$` and `/ MTok`; keep the USD-per-million number. For Sonnet 5 use the
-     currently-effective row.
-   - `WebFetch` `https://platform.openai.com/docs/pricing` (follow redirect) for
-     `gpt-5.5` (and `gpt-5.5-pro` if listed): standard `input`, cached input →
-     `cache_read`, `output`; `cache_write` = 0.
+     per model: *Base input tokens* → `input`, *5m cache writes* → `cache_write`,
+     *1h cache writes* → `cache_write_1h`, *Cache hits and refreshes* →
+     `cache_read`, *Output tokens* → `output`. Strip `$` and `/ MTok`; keep the
+     USD-per-million number. Include retired rows too — old usage of them still
+     has to be costed. Mind the footnotes: some families read cache at a
+     different multiplier than the usual 0.1x.
+   - Same page, **Fast mode pricing**: each model listed there gets a second
+     entry keyed `<model>-fast` (e.g. `opus-5-fast`) with that table's input
+     and output, and cache rates derived from its fast input using THAT
+     model's own cache multipliers from the main table — `cache_write` =
+     1.25x, `cache_write_1h` = 2x, and `cache_read` at the model's own ratio
+     (0.1x usually, but e.g. 0.05x for Opus 5.5 — take cache_read / input from
+     its standard row). The logs record the speed per request, so fast-mode
+     turns are costed apart from standard ones.
+   - `WebFetch` `https://platform.openai.com/docs/pricing` (follow redirect).
+     Read every model row: standard `input`, cached input → `cache_read`,
+     `output`; `cache_write` = 0. Use the **standard** (not long-context, batch,
+     flex or priority) tier. Where a row has no cached price, use 0.
 
-3. Map model display names to these exact keys (skip any you can't read
-   confidently): Fable 5→`fable-5`, Mythos 5→`mythos-5`, Opus 4.8→`opus-4-8`,
-   Opus 4.7→`opus-4-7`, Opus 4.6→`opus-4-6`, Opus 4.5→`opus-4-5`,
-   Sonnet 5→`sonnet-5`, Sonnet 4.6→`sonnet-4-6`, Sonnet 4.5→`sonnet-4-5`,
-   Haiku 4.5→`haiku-4-5`; `gpt-5.5`, `gpt-5.5-pro`.
+4. Key naming — the key must match what `normalize_model()` in generate.py
+   produces from the model id in the logs:
+   - Anthropic: drop the leading `Claude `, lowercase, and replace spaces and
+     dots with `-`. "Claude Opus 4.8" → `opus-4-8`, "Claude Fable 5.1" →
+     `fable-5-1`, "Claude Haiku 4.5" → `haiku-4-5`.
+   - OpenAI: the model id exactly as the pricing page spells it — `gpt-5.5`,
+     `gpt-5.5-pro`, `gpt-6-astra`, `gpt-5.6-sol`. OpenAI has no cache-write
+     charge: `cache_write` and `cache_write_1h` are 0.
 
-4. `Write` `~/.claude-activity/prices.json` (overwrite):
+   Skip only rows you genuinely cannot read; never skip a row merely because
+   it is unfamiliar — an unknown new model is exactly what this step is for.
+
+5. `Write` `~/.claude-activity/prices.json` with the MERGED result: start from
+   what step 2 read, overwrite the models you just read, ADD models that were
+   not there before, and **keep models the pages no longer list**. A model
+   dropping off a page is not a price change; deleting it here would silently
+   re-cost every past day that used it.
 
 ```json
-{"fetched":"<today YYYY-MM-DD>","anthropic":{"<key>":{"input":N,"output":N,"cache_write":N,"cache_read":N}},"openai":{"<key>":{...}}}
+{"fetched":"<today YYYY-MM-DD>","anthropic":{"<key>":{"input":N,"output":N,"cache_write":N,"cache_write_1h":N,"cache_read":N}},"openai":{"<key>":{...}}}
 ```
 
-   Include only models read with confidence. Add `"effective":"YYYY-MM-DD"` ONLY
-   if the page states the new rates start on a specific date; otherwise omit it
-   (generate.py stamps the snapshot with the run date). generate.py ignores any
-   out-of-range value as a safety net, but aim for exact numbers.
+   Add `"effective":"YYYY-MM-DD"` ONLY if the page states the new rates start on
+   a specific date; otherwise omit it (generate.py stamps the snapshot with the
+   run date).
+
+6. Sanity-check before writing. generate.py ignores out-of-range values as a
+   safety net, but a *plausible* wrong number gets through and is written into
+   the dated price history, where it stays. Re-read any value where
+   `cache_read` equals `input`, or where a rate moved by more than ~2x since
+   the previous file — those are almost always a column misread, not a real
+   price change.
 
 ## Step 3 — Generate
 
