@@ -467,6 +467,20 @@
     color: var(--accent);
   }
 
+  /* Pause-threshold switch: same shell as the toggles beside it. Locked for a
+     month whose logs Claude Code has pruned, where only the recorded threshold
+     exists — it stays readable, just not clickable. */
+  .gap-toggle { margin-left: auto; }   /* threshold + project filter sit on the right edge */
+  .gap-toggle button { padding: 0 9px; font-variant-numeric: tabular-nums; }
+  /* One unit for the whole group instead of one per number. */
+  .gap-toggle .gap-caption {
+    align-self: center; padding: 0 8px 0 3px;
+    font-size: 11px; color: var(--text-faint); pointer-events: none;
+  }
+  .gap-toggle.locked { opacity: 0.45; }
+  .gap-toggle.locked button { cursor: not-allowed; }
+  .gap-toggle.locked button:hover:not([aria-pressed="true"]) { color: var(--text-dim); }
+
   /* Project filter — custom dropdown (mirrors the month picker). Trigger text
      is tab-colored: grey for "All projects", white once a project is picked. */
   .proj-select { position: relative; }
@@ -868,6 +882,25 @@
   }
   #tooltip { width: 360px; white-space: normal; box-sizing: border-box; }
   #tooltip .t-head { font-weight: 600; margin-bottom: 2px; }
+  /* Explanation for the pause-threshold switch: the page tooltip's look, but
+     dropped below the switch (it sits at the top edge) and right-aligned. */
+  #gapTip {
+    position: fixed; z-index: 10; pointer-events: none; box-sizing: border-box;
+    width: 300px; padding: 8px 10px;
+    background: #1f2937; color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    font-size: 12px; line-height: 1.45; white-space: normal;
+    box-shadow: 0 6px 16px rgba(0,0,0,0.4);
+    opacity: 0; transform: translateY(-4px);
+    transition: opacity 0.12s ease, transform 0.16s cubic-bezier(.2,.7,.3,1);
+  }
+  #gapTip.show { opacity: 1; transform: translateY(0); }
+  #gapTip .gt-head { font-weight: 600; margin-bottom: 6px; }
+  #gapTip .gt-row { display: grid; grid-template-columns: 78px 1fr; gap: 8px; color: var(--text-dim); }
+  #gapTip .gt-row + .gt-row { margin-top: 5px; }
+  #gapTip .gt-row b { font-weight: 500; }
+  #gapTip .gt-row.on { color: var(--text); }
+  #gapTip .gt-note { color: var(--text-dim); }
   #tooltip .t-dim { color: var(--text-dim); font-size: 11px; }
   #tooltip .t-list {
     margin-top: 6px;
@@ -1054,9 +1087,12 @@
         All activity <span class="src-h" data-mode-h="all">—</span>
       </button>
       <button type="button" data-mode="prompts" role="tab" aria-pressed="false"
-              title="Every message you sent is worth a window of prompt_gap_minutes centred on it — half before, half after — and overlapping windows fuse, so a run of messages reads as one stretch while a lone message still counts. Agent-only stretches count as nothing.">
+              title="Every message you sent is worth a window of the pause threshold centred on it — half before, half after — and overlapping windows fuse, so a run of messages reads as one stretch while a lone message still counts. Agent-only stretches count as nothing.">
         My time <span class="src-h" data-mode-h="prompts">—</span>
       </button>
+    </div>
+    <div class="source-toggle gap-toggle" id="gapToggle" role="tablist" aria-label="Pause threshold" hidden>
+      <span class="src-pill" id="gapPill"></span>
     </div>
     <div class="proj-select" id="projectSelectWrap">
       <button class="proj-select-trigger" id="projectSelectTrigger" type="button" aria-haspopup="listbox" aria-expanded="false" title="Filter by project">
@@ -1112,6 +1148,7 @@
 </div>
 
 <div id="tooltip"></div>
+<div id="gapTip" role="tooltip"></div>
 
 <script id="claude-activity-data">
 /* DATA_START */
@@ -1168,6 +1205,12 @@ const todayKey = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2
 const STORAGE_SOURCE_KEY = "claude-activity.source";
 const STORAGE_MODE_KEY = "claude-activity.mode";
 const STORAGE_PROJECT_KEY = "claude-activity.project";
+const STORAGE_GAP_KEY = "claude-activity.gap";
+let currentGap = null;         // pause threshold in minutes, shared by both clocks
+
+// Must match MAX_SESSIONS_PER_HOUR in generate.py.
+const MAX_SESSIONS_PER_HOUR = 30;
+
 
 // Inline SVG marks. Drawn from primitive shapes — not exact brand logos,
 // just recognizable cues. Use currentColor so badge styles control hue.
@@ -1211,6 +1254,177 @@ function getView() {
       ? DATA.sources[currentSource].prompt_total_seconds
       : DATA.sources[currentSource].total_seconds) || 0,
   };
+}
+
+// ---- pause threshold ----
+// The generator computes both clocks at every preset threshold and stores
+// them per day in day.g ({"sm": session meta, "<minutes>": {h, ph, s, p, pp,
+// ps}}). Switching thresholds swaps those figures into the same day fields
+// everything else reads (hours, sessions, totals …), so no renderer needs to
+// know thresholds exist. A month is switched only if every day of it carries
+// variants (month.gap_exact); otherwise part of it would be pruned history
+// that can't be recomputed, and it is shown whole at the recorded threshold.
+// A switchable month reads its variants at EVERY threshold, the configured one
+// included: they come from one consistent pass, whereas the base per-session
+// rows are a max over many runs and can overshoot the hour — mixing the two
+// would make a session's time shrink as the threshold grows.
+function snapshotBaseFields() {
+  for (const src in DATA.sources || {}) {
+    for (const mk in DATA.sources[src].months || {}) {
+      const days = DATA.sources[src].months[mk].days || {};
+      for (const dk in days) {
+        const d = days[dk];
+        d._base = {
+          hours: d.hours, proj_hours: d.proj_hours, sessions: d.sessions, total: d.total,
+          prompt_hours: d.prompt_hours, prompt_proj_hours: d.prompt_proj_hours,
+          prompt_sessions: d.prompt_sessions, prompt_total: d.prompt_total,
+        };
+      }
+    }
+  }
+}
+function variantSessions(byHour, meta) {
+  const out = {};
+  for (const h in byHour || {}) {
+    out[h] = Object.entries(byHour[h]).map(([key, sec]) => {
+      const m = meta[key] || [];
+      return { sid: m[3] || key, project: m[0] || "unknown", title: m[1] || "",
+               source: m[2] || "", sec };
+    }).sort((a, b) => b.sec - a.sec).slice(0, MAX_SESSIONS_PER_HOUR);
+  }
+  return out;
+}
+function sumValues(o) { let t = 0; for (const k in o || {}) t += o[k]; return t; }
+function applyGap() {
+  for (const src in DATA.sources || {}) {
+    const S = DATA.sources[src];
+    let srcTotal = 0, srcPrompt = 0;
+    for (const mk in S.months || {}) {
+      const M = S.months[mk];
+      const switchable = !!M.gap_exact && currentGap != null;
+      let total = 0, prompt = 0;
+      for (const dk in M.days || {}) {
+        const d = M.days[dk], b = d._base;
+        if (!b) continue;
+        const v = switchable && d.g ? (d.g[String(currentGap)] || {}) : null;
+        const meta = (d.g && d.g.sm) || {};
+        if (v) {
+          d.hours = v.h || {};
+          d.proj_hours = v.ph || null;
+          d.sessions = variantSessions(v.s, meta);
+          d.total = sumValues(d.hours);
+        } else {
+          d.hours = b.hours; d.proj_hours = b.proj_hours;
+          d.sessions = b.sessions; d.total = b.total;
+        }
+        if (v) {
+          d.prompt_hours = v.p || null;
+          d.prompt_proj_hours = v.pp || null;
+          d.prompt_sessions = variantSessions(v.ps, meta);
+          d.prompt_total = sumValues(d.prompt_hours);
+        } else {
+          d.prompt_hours = b.prompt_hours; d.prompt_proj_hours = b.prompt_proj_hours;
+          d.prompt_sessions = b.prompt_sessions; d.prompt_total = b.prompt_total;
+        }
+        total += d.total || 0;
+        prompt += d.prompt_total || 0;
+      }
+      M.total = total;
+      M.prompt_total = prompt;
+      srcTotal += total;
+      srcPrompt += prompt;
+    }
+    S.total_seconds = srcTotal;
+    S.prompt_total_seconds = srcPrompt;
+  }
+}
+function gapLocked() {
+  const months = DATA.sources && DATA.sources[currentSource] && DATA.sources[currentSource].months;
+  const M = months && currentMonth ? months[currentMonth] : null;
+  return !!M && !M.gap_exact;
+}
+function initGapToggle() {
+  const wrap = document.getElementById("gapToggle");
+  const presets = (DATA.gap_presets || []).filter(Number.isFinite);
+  if (!wrap || !presets.length) return;
+  wrap.insertAdjacentHTML("beforeend", presets.map(m =>
+    `<button type="button" role="tab" data-gap="${m}" aria-pressed="false" ` +
+    `aria-label="${m} minutes">${m}</button>`).join("") +
+    `<span class="gap-caption" aria-hidden="true">min</span>`);
+  wrap.querySelectorAll("button").forEach(b => {
+    b.addEventListener("click", () => { if (!gapLocked()) setGap(Number(b.dataset.gap)); showGapTip(); });
+    b.addEventListener("mouseenter", () => showGapTip(Number(b.dataset.gap)));
+  });
+  wrap.addEventListener("mouseenter", () => showGapTip());
+  wrap.addEventListener("mouseleave", hideGapTip);
+  wrap.hidden = false;
+  requestAnimationFrame(() => {
+    updateGapToggle();
+    requestAnimationFrame(() => wrap.classList.add("ready"));
+  });
+}
+function updateGapToggle() {
+  const wrap = document.getElementById("gapToggle");
+  if (!wrap || wrap.hidden) return;
+  const locked = gapLocked();
+  // A locked month shows the threshold its figures were recorded with.
+  const shown = locked
+    ? (currentMode === "prompts" ? DATA.prompt_gap_limit_minutes : DATA.gap_limit_minutes)
+    : currentGap;
+  wrap.classList.toggle("locked", locked);
+  wrap.querySelectorAll("button").forEach(b => {
+    b.setAttribute("aria-pressed", Number(b.dataset.gap) === shown ? "true" : "false");
+    b.setAttribute("aria-disabled", locked ? "true" : "false");
+  });
+  const pill = document.getElementById("gapPill");
+  const btn = wrap.querySelector('button[aria-pressed="true"]');
+  if (pill) {
+    pill.style.left = btn ? btn.offsetLeft + "px" : "0";
+    pill.style.width = btn ? btn.offsetWidth + "px" : "0";
+  }
+}
+function fmtMin(m) { return `${Number.isInteger(m) ? m : m.toFixed(1)}\u00a0min`; }  // never split "10 min"
+// What the threshold means, for the value under the pointer (or the current
+// one), with the row of the clock on screen emphasised. A locked month says
+// why instead — the switch looks disabled and should explain itself.
+function showGapTip(hovered) {
+  const tip = document.getElementById("gapTip"), wrap = document.getElementById("gapToggle");
+  if (!tip || !wrap) return;
+  let html;
+  if (gapLocked()) {
+    const rec = currentMode === "prompts" ? DATA.prompt_gap_limit_minutes : DATA.gap_limit_minutes;
+    html = `<div class="gt-head">Locked at ${fmtMin(rec)} for this month</div>` +
+      `<div class="gt-note">Claude Code deletes a session's log about 30 days after its ` +
+      `last write, and some of this month's logs are gone. It can't be recounted at ` +
+      `another threshold, so it stays at the one it was recorded with.</div>`;
+  } else {
+    const m = Number.isFinite(hovered) ? hovered : currentGap;
+    const on = mode => currentMode === mode ? " on" : "";
+    html = `<div class="gt-head">Pause threshold · ${fmtMin(m)}</div>` +
+      `<div class="gt-row${on("all")}"><b>All activity</b><span>A pause between any two ` +
+      `events counts as work if it is ${fmtMin(m)} or shorter.</span></div>` +
+      `<div class="gt-row${on("prompts")}"><b>My time</b><span>Each message you sent ` +
+      `counts ±${fmtMin(m / 2)} around it; windows that overlap merge into one stretch.</span></div>`;
+  }
+  tip.innerHTML = html;
+  const r = wrap.getBoundingClientRect();
+  const left = Math.max(8, Math.min(r.right - tip.offsetWidth, innerWidth - tip.offsetWidth - 8));
+  tip.style.left = left + "px";
+  tip.style.top = (r.bottom + 8) + "px";
+  tip.classList.add("show");
+}
+function hideGapTip() {
+  const tip = document.getElementById("gapTip");
+  if (tip) tip.classList.remove("show");
+}
+function setGap(minutes) {
+  if (!Number.isFinite(minutes) || minutes === currentGap) return;
+  currentGap = minutes;
+  try { localStorage.setItem(STORAGE_GAP_KEY, String(minutes)); } catch (e) {}
+  applyGap();
+  rebuildProjectOptions();
+  renderMonthPicker();
+  setMonth(currentMonth);
 }
 
 // ---- project filter ----
@@ -1667,6 +1881,7 @@ function updateToggleLabels() {
   }
   positionSrcPill();  // button widths change with the labels above
   positionModePill();
+  updateGapToggle();
 }
 
 function initSourceToggle() {
@@ -2261,8 +2476,18 @@ if (!window.CLAUDE_ACTIVITY_DATA) {
     if (sp) currentProject = sp;
   } catch (e) {}
 
+  snapshotBaseFields();
+  const presets = (DATA.gap_presets || []).filter(Number.isFinite);
+  currentGap = Number.isFinite(DATA.gap_limit_minutes) ? DATA.gap_limit_minutes : null;
+  try {
+    const sg = Number(localStorage.getItem(STORAGE_GAP_KEY));
+    if (presets.includes(sg)) currentGap = sg;
+  } catch (e) {}
+  applyGap();
+
   applyBrandIcons(DATA.icons);
   initSourceToggle();
+  initGapToggle();
 
   // First render forces "both" so the initial syncCellSize() locks the cell
   // size against the *fullest* sidebar — switching to claude/codex later

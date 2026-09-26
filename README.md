@@ -16,6 +16,16 @@ it in a browser (system fonts are used as a fallback offline).
 
 - **Source toggle** at the top: **Both** (Union of activity intervals) ·
   **Claude** · **Codex**. Choice persists in localStorage.
+- **Pause-threshold switch** — **2 · 5 · 10 · 20 · 30 min**, one setting for
+  both clocks: in *All activity* a pause between events counts if it is no
+  longer than the threshold; in *My time* each message you sent is worth that
+  long, centred on it. Both clocks are precomputed at every preset, so the
+  switch is instant and every chart, total and tooltip follows it. A month is
+  switchable only while it can be recounted exactly: Claude Code deletes a
+  session's log `cleanupPeriodDays` (30 by default) after its last write, so a
+  month whose logs are already partly gone is **locked** at the threshold it
+  was recorded with. Every day recorded from this version on keeps all
+  presets in `history.json`, so months stay switchable after their logs go.
 - 24 × N-day heatmap for any month with activity
 - Three cell types: **work hours** (configurable), **off-hours** (weekday
   outside the work window), **weekends** — color-coded green / yellow / red
@@ -96,7 +106,8 @@ threshold, first day of week) and saves the answers to
 
 | Key | Default | Meaning |
 |---|---|---|
-| `gap_minutes` | `10` | Max gap between events that still counts as continuous activity. |
+| `gap_minutes` | `10` | Max gap between events that still counts as continuous activity. The page's threshold switch starts here; any value outside the presets is added as an extra preset. |
+| `prompt_gap_minutes` | `gap_minutes` | Window each message you sent is worth in *My time*, centred on it. Used for months locked at their recorded threshold. |
 | `work_intervals` | `[[9, 18]]` | Work hours as an array of `[start, end)` pairs (0–23). Multiple pairs let you split around a lunch break, e.g. `[[9, 12], [13, 18]]`. |
 | `work_days` | `[0,1,2,3,4]` | Weekday indices, `0` = Monday … `6` = Sunday. |
 | `first_day_of_week` | `0` | Where the by-day-of-week chart starts. `0` = Mon, `6` = Sun. |
@@ -115,8 +126,14 @@ threshold, first day of week) and saves the answers to
    (`<repo>/docs/specs`) or in a git **worktree**
    (`<repo>/.claude-worktrees/<branch>`, including Claude Code's own isolated
    worktrees) rolls up to the repo instead of surfacing as its own project.
-   The worktree/branch name is kept as the session's label. Names that older
-   versions recorded as standalone projects are migrated on load and the
+   The worktree/branch name is kept as the session's label. Spaces,
+   underscores and hyphens in a project name are one separator, so
+   `theme generator` and `theme-generator` are one project. Chats in the Codex
+   desktop app that have no folder of their own — the scratch folders it makes
+   under `~/Documents/Codex/<date>/` and the local mirrors of ChatGPT Projects
+   under `~/.codex/.chatgpt-projects/` — are filed together as `codex-chats`,
+   each session labelled by its first message (or the ChatGPT project's name).
+   Names that older versions recorded differently are migrated on load and the
    rename map is persisted in `history.json`, so the fix holds even after the
    raw logs are pruned.
 3. **Day categorisation** uses `work_days` + `work_intervals`:

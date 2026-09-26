@@ -14,13 +14,14 @@ A merged history file is maintained so months that Claude Code later prunes
 from disk are preserved in the dashboard.
 """
 
+import hashlib
 import json
 import os
 import re
 import shutil
 import sys
 import webbrowser
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -578,10 +579,94 @@ def _linked_worktree_main(gitfile):
     return None
 
 
+def canonical_project_name(name):
+    """One spelling per project: runs of spaces, underscores and hyphens are
+    the same separator. A folder renamed from "theme generator" to
+    "theme-generator" (or saved as "theme_generator" on another machine) is one
+    project, not three rows in the filter. Case is left alone — names like
+    "GitLab" read as their owner wrote them."""
+    if not name:
+        return name
+    return re.sub(r"[\s_\-]+", "-", name).strip("-") or name
+
+
 def project_name_from_cwd(cwd):
+    raw = _project_name_from_cwd(cwd)
+    name = canonical_project_name(raw)
+    _record_rename(raw, name)
+    return name
+
+
+def _history_project_names(months):
+    """Every project name a loaded history mentions, wherever it is stored."""
+    names = set()
+    for mval in months.values():
+        for day in (mval.get("days") or {}).values():
+            for key in ("sessions", "prompt_sessions"):
+                for items in (day.get(key) or {}).values():
+                    names.update(it.get("project") for it in items or [])
+            for key in ("proj_hours", "prompt_proj_hours"):
+                for row in (day.get(key) or {}).values():
+                    names.update(row or {})
+            names.update(day.get("proj_tokens") or {})
+            names.update(day.get("proj_models") or {})
+            g = day.get("g") or {}
+            names.update(meta[0] for meta in (g.get("sm") or {}).values() if meta)
+            for minutes, v in g.items():
+                if minutes != "sm":
+                    for key in ("ph", "pp"):
+                        for row in (v.get(key) or {}).values():
+                            names.update(row or {})
+    names.discard(None)
+    return names
+
+
+# Chats in the Codex desktop app that are not tied to a folder of the user's
+# own become one project instead of a row per chat in the filter.
+CODEX_CHATS_PROJECT = "codex-chats"
+
+
+def _codex_chat_workspace(p):
+    """(label, folder name the chat used to be filed under) when `p` is a
+    workspace the Codex desktop app made for a chat rather than a project
+    folder, else None. Two kinds:
+      * ~/Documents/Codex/<date>/<slug> — the scratch folder for a chat started
+        without a project, named after the first words of its first message;
+      * ~/.codex/.chatgpt-projects/g-p-<id> — the local mirror of a ChatGPT
+        Project, whose AGENTS.md names it ("… of the ChatGPT project “Sweed”")."""
+    home = Path.home()
+    try:
+        rel = p.relative_to(home / "Documents" / "Codex")
+        if len(rel.parts) >= 2:
+            return rel.parts[1], rel.parts[1]
+    except ValueError:
+        pass
+    try:
+        rel = p.relative_to(home / ".codex" / ".chatgpt-projects")
+        if rel.parts and not rel.parts[0].startswith("."):
+            folder = home / ".codex" / ".chatgpt-projects" / rel.parts[0]
+            label = rel.parts[0]
+            try:
+                m = re.search(r"ChatGPT project [“\"](.+?)[”\"]",
+                              (folder / "AGENTS.md").read_text())
+                if m:
+                    label = "ChatGPT · " + m.group(1)
+            except OSError:
+                pass
+            return label, rel.parts[0]
+    except ValueError:
+        pass
+    return None
+
+
+def _project_name_from_cwd(cwd):
     if not cwd:
         return "unknown"
     p = Path(cwd)
+    chat = _codex_chat_workspace(p)
+    if chat:
+        _record_rename(chat[1], CODEX_CHATS_PROJECT)
+        return CODEX_CHATS_PROJECT
     # A worktree is part of its repo's work, not a project of its own.
     # <repo>/.claude-worktrees/<wt>/... attributes to <repo> by pure path
     # logic, so it keeps working after the worktree folder is deleted.
@@ -623,6 +708,9 @@ def cwd_sublabel(cwd):
     if not cwd:
         return ""
     p = Path(cwd)
+    chat = _codex_chat_workspace(p)
+    if chat:
+        return chat[0]
     parts = p.parts
     if WORKTREES_DIRNAME in parts and len(parts) > parts.index(WORKTREES_DIRNAME) + 1:
         return p.name
@@ -1020,6 +1108,10 @@ def collect_codex():
     return events, session_meta
 
 
+def _unknown_project(name):
+    return not name or name == "unknown"
+
+
 def collect():
     """Collect events from all sources. Returns:
         events_by_source = {
@@ -1034,11 +1126,36 @@ def collect():
     if prompt_events:
         claude_events = sorted(claude_events + prompt_events,
                                key=lambda e: e[0])
-        # Real-log meta is richer (AI titles, branch fallbacks) — it wins.
-        claude_meta = {**prompt_meta, **claude_meta}
+        # Real-log meta is richer (AI titles, branch fallbacks) — it wins,
+        # but only where it actually knows something. A log file with no
+        # working directory — Remote Control's one-line "bridge-session"
+        # marker, for one — still names its session, and must not blank out
+        # the project and title the prompt log recorded for it.
+        merged = {**prompt_meta, **claude_meta}
+        for sid, meta in merged.items():
+            pm = prompt_meta.get(sid)
+            if not pm or meta is pm:
+                continue
+            meta = dict(meta)
+            if _unknown_project(meta.get("project")) and not _unknown_project(pm.get("project")):
+                meta["project"] = pm["project"]
+            if not meta.get("title") and pm.get("title"):
+                meta["title"] = pm["title"]
+            merged[sid] = meta
+        claude_meta = merged
     codex_events, codex_meta = collect_codex()
     both_events = sorted(claude_events + codex_events, key=lambda e: e[0])
     session_meta = {**claude_meta, **codex_meta}
+    # Last resort: a session still without a project takes the one its own
+    # events were filed under, rather than surfacing as an "unknown" project
+    # in the filter while its hours sit under the real one.
+    seen = defaultdict(Counter)
+    for e in both_events:
+        if len(e) > 3 and e[2] and not _unknown_project(e[3]):
+            seen[e[2]][e[3]] += 1
+    for sid, meta in session_meta.items():
+        if _unknown_project(meta.get("project")) and seen.get(sid):
+            session_meta[sid] = {**meta, "project": seen[sid].most_common(1)[0][0]}
     return {
         "claude": claude_events,
         "codex":  codex_events,
@@ -1359,14 +1476,19 @@ def merge_sessions(a, b):
             sec = int(item.get("sec", 0))
             cur = by_key.get(key)
             if cur is None or sec > cur["sec"]:
+                known = cur["project"] if cur and not _unknown_project(cur["project"]) else None
                 by_key[key] = {
                     "sid": sid,
-                    "project": item.get("project", "unknown"),
-                    "title": item.get("title", ""),
+                    "project": (item.get("project") if not _unknown_project(item.get("project"))
+                                else known) or "unknown",
+                    "title": item.get("title", "") or (cur or {}).get("title", ""),
                     "source": item.get("source") or "claude",
                     "sec": sec,
                 }
             else:
+                # a known project beats "unknown" for the same session
+                if _unknown_project(cur["project"]) and not _unknown_project(item.get("project")):
+                    cur["project"] = item["project"]
                 # same session, keep the richer (longer, non-empty) title
                 t = item.get("title", "")
                 if len(t) > len(cur.get("title", "")):
@@ -1497,6 +1619,22 @@ def apply_project_renames(months, renames):
                         t = renames.get(pname, pname)
                         out[t] = min(3600, out.get(t, 0) + sec)
                     ph[hk] = out
+            g = day.get("g") or {}
+            for meta in (g.get("sm") or {}).values():
+                if meta and meta[0] in renames:
+                    meta[0] = renames[meta[0]]
+            for minutes, v in g.items():
+                if minutes == "sm":
+                    continue
+                for f in ("ph", "pp"):
+                    for hk, row in (v.get(f) or {}).items():
+                        if not row or not any(p in renames for p in row):
+                            continue
+                        out = {}
+                        for pname, sec in row.items():
+                            t = renames.get(pname, pname)
+                            out[t] = min(3600, out.get(t, 0) + sec)
+                        v[f][hk] = out
             pm = day.get("proj_models")
             if pm and any(p in renames for p in pm):
                 out = {}
@@ -1561,7 +1699,10 @@ def stamp_pruned_projects(months, logged_projects):
     return months
 
 
-def merge_months(current, history):
+def merge_months(current, history, with_variants=True):
+    """`with_variants=False` keeps the threshold variants of `current` only —
+    for folding the per-source months into "both", where a per-source day's
+    variants describe one source and would under-report the union."""
     merged = {}
     for mkey in set(current) | set(history):
         c_days = current.get(mkey, {}).get("days", {})
@@ -1590,6 +1731,10 @@ def merge_months(current, history):
                 "total": sum(hours.values()),
                 "prompt_total": sum(prompt_hours.values()),
             }
+            g = (merge_gap_variants(cd.get("g"), hd.get("g")) if with_variants
+                 else cd.get("g"))
+            if g:
+                day["g"] = g
             days[dkey] = day
         merged[mkey] = {
             "days": days,
@@ -1682,6 +1827,22 @@ def _iter_history_files(history_file):
 # ~/.claude/history.jsonl, so the operator clock can always be rebuilt.
 PROMPT_CLOCK_VERSION = 7
 
+# Thresholds the dashboard can switch between without regenerating. Both
+# clocks are computed at every preset (the configured gaps are always added),
+# so the page's switch is a lookup, not a recalculation.
+GAP_PRESETS = (2, 5, 10, 20, 30)
+
+# Bump whenever the rule behind either clock changes (PROMPT_CLOCK_VERSION,
+# the activity chain, what counts as a message …): variants recorded under the
+# old rule are then dropped and rebuilt. Deliberately NOT tied to the
+# configured thresholds — the variants are keyed by threshold, so changing
+# the config never invalidates them.
+GAP_VARIANTS_VERSION = 2
+
+# How far a recorded hour may exceed a fresh recomputation before the day is
+# judged incomplete (its logs partly pruned) and left out of the switch.
+_GAP_EXACT_TOLERANCE = 60
+
 # Bumped when the MEANING of a stored token field changes, as opposed to its
 # value. History merges every token field by max (so a pruned log can never
 # lower a number), which also means a counting fix can never lower one either
@@ -1745,6 +1906,196 @@ def _strip_openai_tokens(months):
 _PROMPT_CLOCK_GAP = [None]
 
 
+def _skey(sid):
+    """Short, stable key for a session inside the per-day variant maps. Full
+    ids would be repeated for every hour of every preset; a 40-bit hash is
+    collision-free in practice for the few dozen sessions a day holds, and
+    unlike an id prefix it does not collide for time-ordered (UUIDv7) ids
+    started a few seconds apart."""
+    return hashlib.blake2s((sid or "").encode(), digest_size=5).hexdigest()
+
+
+def build_gap_variants(events, presets):
+    """Both clocks at every threshold in `presets`, using exactly the rules of
+    build_buckets (activity chain) and build_prompt_hours (message windows).
+    Returns {minutes: (act_hours, act_proj, act_sess, pr_hours, pr_proj,
+    pr_sess)} with the same key shapes as build_buckets' maps."""
+    out = {}
+    for minutes in presets:
+        gl = timedelta(minutes=minutes)
+        hour_b = defaultdict(float)
+        sess_b = defaultdict(lambda: defaultdict(float))
+        for i in range(1, len(events)):
+            if events[i][0] - events[i - 1][0] <= gl:
+                distribute_interval(events[i - 1][0], events[i][0], events[i][2],
+                                    hour_b, sess_b)
+        pr_hours, pr_proj, pr_sess = build_prompt_hours(events, gl)
+        out[minutes] = (hour_b, build_project_hours(events, gl), sess_b,
+                        pr_hours, pr_proj, pr_sess)
+    return out
+
+
+def shape_gap_variants(variants, session_meta):
+    """{month: {day: g}} where g = {"sm": {key: [project, title, source, sid]},
+    "<minutes>": {"h", "ph", "s", "p", "pp", "ps"}} — hours, per-project hours
+    and per-session seconds for the activity clock (h/ph/s) and the message
+    clock (p/pp/ps). Rounding, thresholds and the per-hour session cap mirror
+    shape_output exactly, so the configured preset reproduces the base fields."""
+    out = defaultdict(lambda: defaultdict(lambda: {"sm": {}}))
+
+    def day_of(k):
+        y, m, d, _h = k
+        return out[f"{y:04d}-{m:02d}"][f"{d:02d}"]
+
+    def put(day, minutes, field, hour, value):
+        day.setdefault(str(minutes), {}).setdefault(field, {})[str(hour)] = value
+
+    def sessions(day, minutes, field, hour, sid_map):
+        kept = sorted(((sid, sec) for sid, sec in sid_map.items() if sec >= 1),
+                      key=lambda x: -x[1])[:MAX_SESSIONS_PER_HOUR]
+        if not kept:
+            return
+        row = {}
+        for sid, sec in kept:
+            key = _skey(sid)
+            meta = session_meta.get(sid, {})
+            day["sm"].setdefault(key, [meta.get("project", "unknown"),
+                                       meta.get("title", ""),
+                                       meta.get("source", ""), sid])
+            row[key] = round(sec)
+        put(day, minutes, field, hour, row)
+
+    for minutes, (ah, ap, asess, ph, pp, psess) in variants.items():
+        for k, sec in ah.items():
+            if sec > 0:
+                put(day_of(k), minutes, "h", k[3], round(sec))
+        for k, pmap in ap.items():
+            row = {pr: round(sec) for pr, sec in pmap.items() if sec >= 1}
+            if row:
+                put(day_of(k), minutes, "ph", k[3], row)
+        for k, sid_map in asess.items():
+            sessions(day_of(k), minutes, "s", k[3], sid_map)
+        for k, sec in ph.items():
+            if sec >= 1:
+                put(day_of(k), minutes, "p", k[3], round(sec))
+        for k, pmap in pp.items():
+            row = {pr: round(sec) for pr, sec in pmap.items() if sec >= 1}
+            if row:
+                put(day_of(k), minutes, "pp", k[3], row)
+        for k, sid_map in psess.items():
+            sessions(day_of(k), minutes, "ps", k[3], sid_map)
+    return out
+
+
+def attach_gap_variants(months, shaped):
+    """Hang each day's variants on the matching day of a shape_output result."""
+    for mkey, days in shaped.items():
+        mval = months.setdefault(mkey, {"days": {}, "total": 0, "prompt_total": 0,
+                                        "tokens_total": 0})
+        for dkey, g in days.items():
+            mval["days"].setdefault(dkey, {"hours": {}, "sessions": {}, "total": 0,
+                                           "prompt_total": 0})["g"] = g
+    return months
+
+
+def claude_log_retention_days():
+    """How long Claude Code keeps a session's main log: `cleanupPeriodDays` in
+    ~/.claude/settings.json, 30 when unset. A session file is deleted by the
+    date of its LAST write, so every session active on a day younger than this
+    still has its whole log on disk — which is what makes that day's
+    recomputation complete."""
+    try:
+        data = json.loads((Path.home() / ".claude" / "settings.json").read_text())
+        days = int(data.get("cleanupPeriodDays") or 30)
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        days = 30
+    return max(1, days)
+
+
+def drop_incomplete_variants(current, history, gap, prompt_gap, fresh_since=None):
+    """Keep a freshly computed day's variants only if they account for
+    everything already recorded for that day.
+
+    Claude Code prunes a session's main log after about a month, while its
+    subagent files and the prompt log live on. Recomputing such a day sees
+    only part of it — fewer hours than history holds — and switching it to
+    another threshold would silently mix the partial recount with the recorded
+    total. So a day is switchable only if, at the configured thresholds, no
+    recorded hour exceeds the fresh recount. Days that already carry variants
+    in history were checked when they were recorded and stay trusted.
+
+    The comparison alone is not enough for months whose history was itself
+    first written after their logs were pruned: history and recount then see
+    the same partial data and agree. `fresh_since` (a date) closes that gap —
+    only days young enough that no log of theirs can have been deleted get new
+    variants at all."""
+    for mkey, mval in current.items():
+        hdays = (history.get(mkey) or {}).get("days") or {}
+        for dkey, day in (mval.get("days") or {}).items():
+            g = day.get("g")
+            hd = hdays.get(dkey)
+            if not g or (hd and hd.get("g")):
+                continue
+            if fresh_since is not None:
+                y, m = map(int, mkey.split("-"))
+                if datetime(y, m, int(dkey)).date() < fresh_since:
+                    day.pop("g", None)
+                    continue
+            if not hd:
+                continue
+            act = (g.get(str(gap)) or {}).get("h") or {}
+            msg = (g.get(str(prompt_gap)) or {}).get("p") or {}
+            ok = all(sec <= act.get(h, 0) + _GAP_EXACT_TOLERANCE
+                     for h, sec in (hd.get("hours") or {}).items()) and \
+                 all(sec <= msg.get(h, 0) + _GAP_EXACT_TOLERANCE
+                     for h, sec in (hd.get("prompt_hours") or {}).items())
+            if not ok:
+                day.pop("g", None)
+    return current
+
+
+def merge_gap_variants(a, b):
+    """Union of two days' variants: per-threshold, per-hour max — the same
+    pruning-safe rule as every other hour map. Session metadata prefers `a`
+    (the current run), whose titles are the freshest."""
+    if not a and not b:
+        return None
+    if not a or not b:
+        return a or b
+    out = {"sm": {**(b.get("sm") or {}), **(a.get("sm") or {})}}
+    for minutes in (set(a) | set(b)) - {"sm"}:
+        va, vb = a.get(minutes) or {}, b.get(minutes) or {}
+        v = {}
+        for f in ("h", "p"):
+            merged = merge_hour_dicts(va.get(f) or {}, vb.get(f) or {})
+            if merged:
+                v[f] = merged
+        for f in ("ph", "pp", "s", "ps"):
+            merged = merge_proj_hours(va.get(f), vb.get(f))
+            if merged:
+                v[f] = merged
+        out[minutes] = v
+    return out
+
+
+def stamp_gap_exact(months):
+    """A month can be switched between thresholds only if every day that
+    recorded any time carries variants — otherwise part of it would move with
+    the switch and part would stay put."""
+    for mval in months.values():
+        days = (mval.get("days") or {}).values()
+        mval["gap_exact"] = all(
+            "g" in d for d in days if (d.get("total") or d.get("prompt_total")))
+    return months
+
+
+def _strip_gap_variants(months):
+    for mval in months.values():
+        for day in (mval.get("days") or {}).values():
+            day.pop("g", None)
+    return months
+
+
 def _strip_prompt_clock(months):
     """Remove a prompt clock computed under a superseded rule."""
     for mval in months.values():
@@ -1776,6 +2127,9 @@ def _parse_history_sources(raw):
     if raw.get("token_rule") != TOKEN_RULE_VERSION:
         for months in out.values():
             _strip_openai_tokens(months)
+    if raw.get("gap_variants") != GAP_VARIANTS_VERSION:
+        for months in out.values():
+            _strip_gap_variants(months)
     return out
 
 
@@ -1977,8 +2331,9 @@ def compact_history(output_dir, prompt_gap_minutes=None):
                        "prompt_clock": PROMPT_CLOCK_VERSION,
                        "prompt_clock_gap": _PROMPT_CLOCK_GAP[0],
                        "token_rule": TOKEN_RULE_VERSION,
+                       "gap_variants": GAP_VARIANTS_VERSION,
                        "project_renames": renames},
-                      ensure_ascii=False, indent=2)
+                      ensure_ascii=False, separators=(",", ":"))
     stamp = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
     archive = output_dir / ("pre-compact-" + stamp)
     archive.mkdir(parents=True, exist_ok=True)
@@ -2001,6 +2356,12 @@ def main():
     prompt_gap_limit = timedelta(minutes=int(cfg["prompt_gap_minutes"]))
     _PROMPT_CLOCK_GAP[0] = int(cfg["prompt_gap_minutes"])
     _CACHE_READ_WEIGHT[0] = float(cfg["cache_read_weight"])
+    gap_minutes = int(cfg["gap_minutes"])
+    prompt_gap_minutes = int(cfg["prompt_gap_minutes"])
+    gap_presets = sorted(set(GAP_PRESETS) | {gap_minutes, prompt_gap_minutes})
+    # One day of margin: pruning runs when Claude Code starts, not at midnight.
+    claude_fresh_since = (datetime.now().astimezone().date()
+                          - timedelta(days=claude_log_retention_days() - 1))
     work_intervals = [
         [int(s), int(e)] for s, e in cfg.get("work_intervals", DEFAULTS["work_intervals"])
     ]
@@ -2034,6 +2395,24 @@ def main():
     # Stale project names in history (worktrees recorded as own projects):
     # persisted renames from previous runs + any discovered from this run's cwds.
     project_renames = {**_load_history_renames(history_file), **WORKTREE_RENAMES}
+    # Spelling variants already in history (their logs may be long gone, so the
+    # parser never sees them) fold into the canonical name too; and every
+    # rename target is canonical, so a worktree of "theme generator" lands on
+    # "theme-generator" in one hop.
+    for s_months in history_by_source.values():
+        for name in _history_project_names(s_months):
+            if canonical_project_name(name) != name:
+                project_renames.setdefault(name, name)
+    project_renames = {old: canonical_project_name(new)
+                       for old, new in project_renames.items()
+                       if old != canonical_project_name(new)}
+    # A chat folder is filed by name, and a name can be shared: never fold a
+    # real project into codex-chats just because some chat's first words
+    # happened to spell its folder name.
+    live_projects = {e[3] for s in SOURCES for e in events_by_source[s]
+                     if len(e) > 3 and e[3]}
+    project_renames = {old: new for old, new in project_renames.items()
+                       if not (new == CODEX_CHATS_PROJECT and old in live_projects)}
     if project_renames:
         for s in SOURCES:
             apply_project_renames(history_by_source.get(s, {}), project_renames)
@@ -2054,6 +2433,12 @@ def main():
                                       day_proj_tok, day_proj_models, proj_hour_b,
                                       prompt_hour_b, prompt_proj_hour_b, prompt_sess_b,
                                       marks_b)
+        attach_gap_variants(current_months, shape_gap_variants(
+            build_gap_variants(ev, gap_presets), session_meta))
+        drop_incomplete_variants(current_months, history_by_source.get(src, {}),
+                                 gap_minutes, prompt_gap_minutes,
+                                 # Codex never prunes its rollouts.
+                                 None if src == "codex" else claude_fresh_since)
         merged_by_source[src] = merge_months(current_months, history_by_source.get(src, {}))
         run_seconds[src] = sum(hour_b.values())
 
@@ -2063,8 +2448,9 @@ def main():
     # has it). Fold the per-source months back in — per-hour max is a safe
     # lower bound for a union, and session items dedup by sid.
     merged_by_source["both"] = merge_months(
-        merge_months(merged_by_source["both"], merged_by_source["claude"]),
-        merged_by_source["codex"])
+        merge_months(merged_by_source["both"], merged_by_source["claude"],
+                     with_variants=False),
+        merged_by_source["codex"], with_variants=False)
 
     # Months whose session logs Claude Code has already pruned: nothing but the
     # prompt log survives for them, so the activity clock can only report a
@@ -2088,6 +2474,7 @@ def main():
         stamp_pruned_projects(merged_months, logged_projects[src])
         for mkey, mval in merged_months.items():
             mval["pruned"] = mkey not in logged_months[src]
+        stamp_gap_exact(merged_months)
         total_cost = apply_costs(merged_months, price_book)
         available = sorted(merged_months.keys())
         total_sec_run = run_seconds[src]
@@ -2117,8 +2504,9 @@ def main():
          "prompt_clock": PROMPT_CLOCK_VERSION,
          "prompt_clock_gap": _PROMPT_CLOCK_GAP[0],
          "token_rule": TOKEN_RULE_VERSION,
+         "gap_variants": GAP_VARIANTS_VERSION,
          "project_renames": project_renames},
-        ensure_ascii=False, indent=2,
+        ensure_ascii=False, separators=(",", ":"),
     )
     history_file.write_text(history_text)
     # Back up the freshly-merged (rich) content — never the possibly-clobbered
@@ -2142,6 +2530,7 @@ def main():
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "gap_limit_minutes": int(gap_limit.total_seconds() // 60),
         "prompt_gap_limit_minutes": int(prompt_gap_limit.total_seconds() // 60),
+        "gap_presets": gap_presets,
         "mark_buckets": MARK_BUCKETS,
         "work_intervals": work_intervals,
         "work_days": work_days,
@@ -2153,7 +2542,8 @@ def main():
         "icons": load_brand_logos(),
     }
 
-    render_html(TEMPLATE_FILE, output_html, json.dumps(payload, indent=2, ensure_ascii=False))
+    render_html(TEMPLATE_FILE, output_html,
+                json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
 
     print(f"  months covered:  {len(available_union)}")
     print(f"  output:          {output_html}")
