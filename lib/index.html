@@ -2504,17 +2504,18 @@ if (!window.CLAUDE_ACTIVITY_DATA) {
     currentMonth = getView().available_months.includes(todayKey)
       ? todayKey
       : getView().available_months[getView().available_months.length - 1];
+    // Check the stored project filter before the first render: a project the
+    // generator has since renamed or merged away would otherwise filter the
+    // whole page down to zero. "both" holds every project, so one missing here
+    // is gone for good and is dropped from storage too.
+    rebuildProjectOptions();
+    if (!currentProject) try { localStorage.removeItem(STORAGE_PROJECT_KEY); } catch (e) {}
     renderMonthPicker();
     setMonth(currentMonth);
-    rebuildProjectOptions();
 
     // Now flip to the user's actual preferred source (cell size already locked).
     if (initialSource !== "both" && DATA.sources[initialSource]) {
       setSource(initialSource);
-    } else if (currentProject) {
-      // Apply a stored project filter on the default source.
-      renderGrid();
-      renderStats();
     }
 
     const gen = new Date(DATA.generated_at);
