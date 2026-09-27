@@ -1204,6 +1204,8 @@ const today = new Date();
 const todayKey = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,"0")}`;
 const STORAGE_SOURCE_KEY = "claude-activity.source";
 const STORAGE_MODE_KEY = "claude-activity.mode";
+// The project filter is not remembered: each load starts on all projects.
+// Earlier versions stored it under this key; it is cleared on load.
 const STORAGE_PROJECT_KEY = "claude-activity.project";
 const STORAGE_GAP_KEY = "claude-activity.gap";
 let currentGap = null;         // pause threshold in minutes, shared by both clocks
@@ -1539,7 +1541,6 @@ function closeProjectSelect() {
 }
 function setProject(p) {
   currentProject = p || "";
-  try { localStorage.setItem(STORAGE_PROJECT_KEY, currentProject); } catch (e) {}
   updateProjectTrigger();
   renderStatsAnimated();
   transitionGrid(() => renderGrid());
@@ -2471,10 +2472,7 @@ if (!window.CLAUDE_ACTIVITY_DATA) {
       b.setAttribute("aria-pressed", b.dataset.mode === currentMode ? "true" : "false");
     });
   } catch (e) {}
-  try {
-    const sp = localStorage.getItem(STORAGE_PROJECT_KEY);
-    if (sp) currentProject = sp;
-  } catch (e) {}
+  try { localStorage.removeItem(STORAGE_PROJECT_KEY); } catch (e) {}
 
   snapshotBaseFields();
   const presets = (DATA.gap_presets || []).filter(Number.isFinite);
@@ -2504,14 +2502,9 @@ if (!window.CLAUDE_ACTIVITY_DATA) {
     currentMonth = getView().available_months.includes(todayKey)
       ? todayKey
       : getView().available_months[getView().available_months.length - 1];
-    // Check the stored project filter before the first render: a project the
-    // generator has since renamed or merged away would otherwise filter the
-    // whole page down to zero. "both" holds every project, so one missing here
-    // is gone for good and is dropped from storage too.
-    rebuildProjectOptions();
-    if (!currentProject) try { localStorage.removeItem(STORAGE_PROJECT_KEY); } catch (e) {}
     renderMonthPicker();
     setMonth(currentMonth);
+    rebuildProjectOptions();
 
     // Now flip to the user's actual preferred source (cell size already locked).
     if (initialSource !== "both" && DATA.sources[initialSource]) {
